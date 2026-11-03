@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml-project"
+version = "0.1.0"
+description = "An AI-powered recruitment sourcing and candidate-job matching platform."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "joblib>=1.3",
+    "pandas>=2.0",
+    "scikit-learn>=1.4",
+    "SQLAlchemy>=2.0",
+]
+
+[project.optional-dependencies]
+export = ["openpyxl>=3.1"]
+database = ["alembic>=1.13", "argon2-cffi>=23.1", "psycopg[binary]>=3.1", "python-dotenv>=1.0"]
+api = ["fastapi>=0.115,<1", "PyJWT>=2.8,<3", "uvicorn>=0.30,<1"]
+semantic = ["sentence-transformers>=3.0"]
+dev = ["httpx>=0.27,<1", "pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+ml-project = "ml_project.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

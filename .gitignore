@@ -1,0 +1,39 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+build/
+dist/
+models/
+.env
+*.db
+*.sqlite3
+
+# Environment variables
+.env.*
+!.env.example
+
+# Vercel
+.vercel/
+
+# Logs
+*.log
+
+# Private recruitment data
+data/
+
+# Generated reports and evaluation outputs
+reports/
+
+# Local editor settings
+.vscode/
+
+# Local development tools
+.kilo/
+
+# Python test and coverage artifacts
+.coverage
+htmlcov/
