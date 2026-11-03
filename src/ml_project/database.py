@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from functools import lru_cache
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -13,18 +14,50 @@ from ml_project.models import Base
 
 
 def create_database_engine(url: str | None = None) -> Engine:
-    """Create a connection pool for DATABASE_URL or an explicitly supplied test URL."""
-    return create_engine(url or get_database_url(), pool_pre_ping=True)
+    """Create a database engine."""
+    if url is None:
+        return get_default_engine()
+
+    return create_engine(url, pool_pre_ping=True)
 
 
-def create_session_factory(engine: Engine | None = None) -> sessionmaker[Session]:
-    """Create sessions bound to the configured engine or a test engine."""
-    return sessionmaker(bind=engine or create_database_engine(), expire_on_commit=False)
+@lru_cache(maxsize=1)
+def get_default_engine() -> Engine:
+    """Return the shared default database engine."""
+    return create_engine(
+        get_database_url(),
+        pool_pre_ping=True,
+    )
 
 
-def get_session(factory: sessionmaker[Session] | None = None) -> Iterator[Session]:
-    """Yield a session and always close it; callers own transaction boundaries."""
-    session_factory = factory or create_session_factory()
+@lru_cache(maxsize=1)
+def get_default_session_factory() -> sessionmaker[Session]:
+    """Return the shared default session factory."""
+    return sessionmaker(
+        bind=get_default_engine(),
+        expire_on_commit=False,
+    )
+
+
+def create_session_factory(
+    engine: Engine | None = None,
+) -> sessionmaker[Session]:
+    """Create a session factory for an explicit engine or reuse the default."""
+    if engine is None:
+        return get_default_session_factory()
+
+    return sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+    )
+
+
+def get_session(
+    factory: sessionmaker[Session] | None = None,
+) -> Iterator[Session]:
+    """Yield a request-scoped session and always close it."""
+    session_factory = factory or get_default_session_factory()
+
     with session_factory() as session:
         yield session
 
@@ -34,4 +67,4 @@ def initialize_database(engine: Engine | None = None) -> None:
 
     Use `alembic upgrade head` for versioned production schema changes.
     """
-    Base.metadata.create_all(engine or create_database_engine())
+    Base.metadata.create_all(engine or get_default_engine())
