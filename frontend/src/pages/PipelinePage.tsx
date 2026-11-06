@@ -302,7 +302,7 @@ export default function PipelinePage() {
                                   {matchScore !== undefined && matchScore !== null && (
                                     <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-300">
                                       <span>Match</span>
-                                      <ScoreDisplay score={matchScore} label="TF-IDF" />
+                                      <ScoreDisplay score={matchScore} max={1} label="TF-IDF" />
                                     </div>
                                   )}
 
