@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ml_project.api.dependencies import get_api_session, get_current_user
 from ml_project.api.main import app
@@ -64,9 +64,10 @@ class FakeResult:
 class FakeSession:
     """Minimal session double for API behavior tests; it never opens a database."""
 
-    def __init__(self, scalar_values=(), execute_results=()):
+    def __init__(self, scalar_values=(), execute_results=(), commit_errors=()):
         self.scalar_values = list(scalar_values)
         self.execute_results = list(execute_results)
+        self.commit_errors = list(commit_errors)
         self.statements = []
         self.added = []
         self.commits = 0
@@ -90,6 +91,9 @@ class FakeSession:
                 record.id = uuid4()
 
     def commit(self):
+        if self.commit_errors:
+            error = self.commit_errors.pop(0)
+            raise error
         self.commits += 1
         for record in self.added:
             if isinstance(record, Shortlist):
@@ -100,12 +104,13 @@ class FakeSession:
         self.rollbacks += 1
 
 
-def _row(status="ACTIVE"):
+def _row(status="ACTIVE", stage="SHORTLISTED"):
     association = JobCandidate(
         id=ASSOCIATION_ID,
         workspace_id=WORKSPACE_ID,
         job_id=JOB_ID,
         candidate_id=CANDIDATE_ID,
+        stage=stage,
     )
     shortlist = Shortlist(
         id=SHORTLIST_ID,
@@ -127,7 +132,7 @@ def _client(monkeypatch, session, *, authenticated=True):
 
 
 def test_post_creates_shortlist_for_assigned_candidate_and_no_auto_association(monkeypatch):
-    row = _row()
+    row = _row(stage="REVIEWING")
     session = FakeSession(
         scalar_values=[MEMBERSHIP, JOB, CANDIDATE, row[1], None],
         execute_results=[FakeResult([row])],
@@ -151,6 +156,7 @@ def test_post_creates_shortlist_for_assigned_candidate_and_no_auto_association(m
     assert session.commits == 1
     saved_shortlist = next(record for record in session.added if isinstance(record, Shortlist))
     assert saved_shortlist.added_by_id == USER_ID
+    assert row[1].stage == "SHORTLISTED"
     assert not any(isinstance(record, JobCandidate) for record in session.added)
 
 
@@ -221,8 +227,68 @@ def test_duplicate_post_is_idempotent(monkeypatch):
     assert session.commits == 0
 
 
+def test_post_recovers_after_concurrent_shortlist_creation(monkeypatch):
+    original_row = _row(status="REMOVED", stage="REVIEWING")
+    reloaded_association = _row(stage="REVIEWING")[1]
+    existing_shortlist = _row()[0]
+
+    session = FakeSession(
+        scalar_values=[
+            MEMBERSHIP,
+            JOB,
+            CANDIDATE,
+            original_row[1],
+            original_row[0],
+            reloaded_association,
+            existing_shortlist,
+        ],
+        execute_results=[FakeResult([_row()])],
+        commit_errors=[IntegrityError("INSERT", {}, Exception("duplicate"))],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["shortlist_id"] == str(SHORTLIST_ID)
+    assert reloaded_association.stage == "SHORTLISTED"
+    assert session.rollbacks == 1
+    assert session.commits == 1
+
+
+def test_post_repairs_stage_for_existing_active_shortlist(monkeypatch):
+    row = _row(stage="REVIEWING")
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, row[1], row[0]],
+        execute_results=[FakeResult([row])],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 200
+    assert row[1].stage == "SHORTLISTED"
+    assert session.commits == 1
+
+
 def test_post_reactivates_removed_shortlist(monkeypatch):
-    shortlist, association, job, candidate, user = _row(status="REMOVED")
+    shortlist, association, job, candidate, user = _row(
+        status="REMOVED", stage="REVIEWING"
+    )
     row = (shortlist, association, job, candidate, user)
     session = FakeSession(
         scalar_values=[MEMBERSHIP, JOB, CANDIDATE, association, shortlist],
@@ -241,11 +307,14 @@ def test_post_reactivates_removed_shortlist(monkeypatch):
 
     assert response.status_code == 201
     assert shortlist.status == "ACTIVE"
+    assert association.stage == "SHORTLISTED"
     assert session.commits == 1
 
 
 def test_post_rejects_hired_candidate(monkeypatch):
-    shortlist, association, job, candidate, user = _row(status="HIRED")
+    shortlist, association, job, candidate, user = _row(
+        status="HIRED", stage="HIRED"
+    )
     row = (shortlist, association, job, candidate, user)
     session = FakeSession(
         scalar_values=[MEMBERSHIP, JOB, CANDIDATE, association, shortlist],
@@ -264,6 +333,7 @@ def test_post_rejects_hired_candidate(monkeypatch):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "A hired candidate cannot be added to the active shortlist."
+    assert association.stage == "HIRED"
 
 
 def test_delete_preserves_candidate_and_association(monkeypatch):

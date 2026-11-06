@@ -89,6 +89,9 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
       })
       qc.invalidateQueries({ queryKey: ['shortlists', variables.workspaceId, variables.jobId] })
       qc.invalidateQueries({ queryKey: ['shortlists', variables.workspaceId] })
+      qc.invalidateQueries({
+        queryKey: ['job-candidates', variables.workspaceId, variables.jobId],
+      })
     },
     onError: (error, variables) => {
       setFeedback({

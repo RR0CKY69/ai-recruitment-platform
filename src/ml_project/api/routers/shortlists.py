@@ -115,6 +115,14 @@ def add_to_shortlist(
         select(Shortlist).where(Shortlist.job_candidate_id == association.id)
     )
     if shortlist is not None and shortlist.status == "ACTIVE":
+        if association.stage != "SHORTLISTED":
+            try:
+                association.stage = "SHORTLISTED"
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                raise _database_error() from None
+
         row = _get_shortlist_details(session, shortlist.id, payload.workspace_id)
         if row is None:
             raise _database_error()
@@ -133,6 +141,8 @@ def add_to_shortlist(
         else:
             shortlist.status = "ACTIVE"
             shortlist.added_by_id = user.id
+
+        association.stage = "SHORTLISTED"
         session.flush()
         record_audit_event(
             session,
@@ -146,6 +156,16 @@ def add_to_shortlist(
         session.commit()
     except IntegrityError:
         session.rollback()
+        association = session.scalar(
+            select(JobCandidate).where(
+                JobCandidate.workspace_id == payload.workspace_id,
+                JobCandidate.job_id == job.id,
+                JobCandidate.candidate_id == candidate.id,
+            )
+        )
+        if association is None:
+            raise _database_error()
+
         existing = session.scalar(
             select(Shortlist).where(
                 Shortlist.job_candidate_id == association.id,
@@ -157,8 +177,17 @@ def add_to_shortlist(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="The shortlist entry conflicts with an existing record.",
             ) from None
+
         response.status_code = status.HTTP_200_OK
         shortlist = existing
+
+        if association.stage != "SHORTLISTED":
+            try:
+                association.stage = "SHORTLISTED"
+                session.commit()
+            except SQLAlchemyError:
+                session.rollback()
+                raise _database_error() from None
     except SQLAlchemyError:
         session.rollback()
         raise _database_error() from None
