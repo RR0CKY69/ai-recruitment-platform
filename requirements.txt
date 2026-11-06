@@ -1,2 +1,2 @@
--e .[export,database,api,dev]
+-e .[export,database]
 # Optional semantic-matching dependencies: install with `python -m pip install -e ".[semantic]"`.
