@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -14,11 +15,9 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
-    func,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -40,13 +39,22 @@ def uuid4():
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index(
+            "uq_users_email_ci",
+            text("lower(email)"),
+            unique=True,
+            postgresql_where=text("email IS NOT NULL"),
+            sqlite_where=text("email IS NOT NULL"),
+        ),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    memberships: Mapped[list["WorkspaceMember"]] = relationship(back_populates="user")
-    refresh_sessions: Mapped[list["RefreshSession"]] = relationship(back_populates="user")
+    memberships: Mapped[list[WorkspaceMember]] = relationship(back_populates="user")
+    refresh_sessions: Mapped[list[RefreshSession]] = relationship(back_populates="user")
 
 
 class Workspace(TimestampMixin, Base):
@@ -55,10 +63,10 @@ class Workspace(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    members: Mapped[list["WorkspaceMember"]] = relationship(back_populates="workspace")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="workspace")
-    candidates: Mapped[list["Candidate"]] = relationship(back_populates="workspace")
-    job_candidates: Mapped[list["JobCandidate"]] = relationship(back_populates="workspace")
+    members: Mapped[list[WorkspaceMember]] = relationship(back_populates="workspace")
+    jobs: Mapped[list[Job]] = relationship(back_populates="workspace")
+    candidates: Mapped[list[Candidate]] = relationship(back_populates="workspace")
+    job_candidates: Mapped[list[JobCandidate]] = relationship(back_populates="workspace")
 
 
 class WorkspaceMember(TimestampMixin, Base):
@@ -66,6 +74,8 @@ class WorkspaceMember(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("role IN ('ADMIN', 'RECRUITER')", name="ck_workspace_members_role_valid"),
         UniqueConstraint("workspace_id", "user_id", name="uq_workspace_members_workspace_user"),
+        Index("ix_workspace_members_workspace_id", "workspace_id"),
+        Index("ix_workspace_members_user_id", "user_id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
@@ -83,6 +93,7 @@ class Job(TimestampMixin, Base):
             name="ck_jobs_status_valid",
         ),
         UniqueConstraint("workspace_id", "id", name="uq_jobs_workspace_id_id"),
+        UniqueConstraint("workspace_id", "legacy_job_id", name="uq_jobs_workspace_legacy_job_id"),
         Index("ix_jobs_workspace_id", "workspace_id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -96,8 +107,8 @@ class Job(TimestampMixin, Base):
     minimum_experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
     workspace: Mapped[Workspace] = relationship(back_populates="jobs")
-    requirements: Mapped[list["JobRequirement"]] = relationship(back_populates="job")
-    job_candidates: Mapped[list["JobCandidate"]] = relationship(
+    requirements: Mapped[list[JobRequirement]] = relationship(back_populates="job")
+    job_candidates: Mapped[list[JobCandidate]] = relationship(
         back_populates="job",
         foreign_keys="JobCandidate.job_id",
     )
@@ -105,6 +116,9 @@ class Job(TimestampMixin, Base):
 
 class JobRequirement(TimestampMixin, Base):
     __tablename__ = "job_requirements"
+    __table_args__ = (
+        Index("ix_job_requirements_job_id", "job_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     requirement_type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -118,6 +132,7 @@ class Candidate(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "email", name="uq_candidates_workspace_email"),
         UniqueConstraint("workspace_id", "id", name="uq_candidates_workspace_id_id"),
+        UniqueConstraint("workspace_id", "legacy_candidate_id", name="uq_candidates_workspace_legacy_candidate_id"),
         Index(
             "uq_candidates_workspace_email_ci",
             "workspace_id",
@@ -140,9 +155,9 @@ class Candidate(TimestampMixin, Base):
     experience_years: Mapped[int | None] = mapped_column(Integer, nullable=True)
     location: Mapped[str | None] = mapped_column(String(250), nullable=True)
     workspace: Mapped[Workspace] = relationship(back_populates="candidates")
-    skills: Mapped[list["CandidateSkill"]] = relationship(back_populates="candidate")
-    sources: Mapped[list["CandidateSource"]] = relationship(back_populates="candidate")
-    job_candidates: Mapped[list["JobCandidate"]] = relationship(
+    skills: Mapped[list[CandidateSkill]] = relationship(back_populates="candidate")
+    sources: Mapped[list[CandidateSource]] = relationship(back_populates="candidate")
+    job_candidates: Mapped[list[JobCandidate]] = relationship(
         back_populates="candidate",
         foreign_keys="JobCandidate.candidate_id",
     )
@@ -150,6 +165,10 @@ class Candidate(TimestampMixin, Base):
 
 class CandidateSkill(TimestampMixin, Base):
     __tablename__ = "candidate_skills"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "normalized_name", name="uq_candidate_skills_candidate_name"),
+        Index("ix_candidate_skills_candidate_id", "candidate_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -160,6 +179,10 @@ class CandidateSkill(TimestampMixin, Base):
 
 class CandidateSource(TimestampMixin, Base):
     __tablename__ = "candidate_sources"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "provider", "source_record_id", name="uq_candidate_sources_record"),
+        Index("ix_candidate_sources_candidate_id", "candidate_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -172,24 +195,44 @@ class CandidateSource(TimestampMixin, Base):
 
 class SearchQuery(TimestampMixin, Base):
     __tablename__ = "search_queries"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["workspace_id", "job_id"],
+            ["jobs.workspace_id", "jobs.id"],
+            name="fk_search_queries_workspace_job",
+            ondelete="CASCADE",
+        ),
+        Index("ix_search_queries_job_id", "job_id"),
+        Index("ix_search_queries_workspace_id", "workspace_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    query_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    query_type: Mapped[str] = mapped_column(String(20), nullable=False, default="BOOLEAN")
+    name: Mapped[str | None] = mapped_column(String(200), nullable=False)
+    query_text: Mapped[str | None] = mapped_column(Text, nullable=False)
+    query_type: Mapped[str] = mapped_column(String(40), nullable=False, default="BOOLEAN")
 
 
 class SourcingTask(TimestampMixin, Base):
     __tablename__ = "sourcing_tasks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["workspace_id", "job_id"],
+            ["jobs.workspace_id", "jobs.id"],
+            name="fk_sourcing_tasks_workspace_job",
+            ondelete="CASCADE",
+        ),
+        Index("ix_sourcing_tasks_job_id", "job_id"),
+        Index("ix_sourcing_tasks_workspace_id", "workspace_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    job_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     requested_by_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    source_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING")
-    progress_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_provider: Mapped[str] = mapped_column(String(150), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="QUEUED")
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     result_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -218,6 +261,8 @@ class JobCandidate(TimestampMixin, Base):
         ),
         UniqueConstraint("job_id", "candidate_id", name="uq_job_candidates_job_candidate"),
         Index("ix_job_candidates_workspace_id", "workspace_id"),
+        Index("ix_job_candidates_job_id", "job_id"),
+        Index("ix_job_candidates_candidate_id", "candidate_id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
@@ -234,9 +279,9 @@ class JobCandidate(TimestampMixin, Base):
         back_populates="job_candidates",
         foreign_keys=[candidate_id],
     )
-    match_results: Mapped[list["MatchResult"]] = relationship(back_populates="job_candidate")
-    shortlist_entries: Mapped[list["Shortlist"]] = relationship(back_populates="job_candidate")
-    evaluation_labels: Mapped[list["EvaluationLabel"]] = relationship(back_populates="job_candidate")
+    match_results: Mapped[list[MatchResult]] = relationship(back_populates="job_candidate")
+    shortlist_entries: Mapped[list[Shortlist]] = relationship(back_populates="job_candidate")
+    evaluation_labels: Mapped[list[EvaluationLabel]] = relationship(back_populates="job_candidate")
 
 
 class MatchResult(TimestampMixin, Base):
@@ -261,6 +306,7 @@ class Shortlist(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("status IN ('ACTIVE', 'REMOVED', 'HIRED')", name="ck_shortlists_status_valid"),
         UniqueConstraint("job_candidate_id", name="uq_shortlists_job_candidate"),
+        Index("ix_shortlists_job_candidate_id", "job_candidate_id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     job_candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("job_candidates.id", ondelete="CASCADE"), nullable=False)
@@ -279,31 +325,40 @@ class EvaluationLabel(TimestampMixin, Base):
             "reviewer_id",
             name="uq_evaluation_labels_pair_reviewer",
         ),
+        Index("ix_evaluation_labels_job_candidate_id", "job_candidate_id"),
+        Index("ix_evaluation_labels_reviewer_id", "reviewer_id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     job_candidate_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("job_candidates.id", ondelete="CASCADE"), nullable=False)
-    reviewer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    relevance_label: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    review_status: Mapped[str] = mapped_column(String(30), nullable=False, default="needs_human_review")
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    relevance_label: Mapped[int | None] = mapped_column(Integer, nullable=False)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="needs_human_review")
     job_candidate: Mapped[JobCandidate] = relationship(back_populates="evaluation_labels")
-    notes: Mapped[list["EvaluationNote"]] = relationship(back_populates="evaluation_label")
+    notes: Mapped[list[EvaluationNote]] = relationship(back_populates="evaluation_label")
 
 
 class EvaluationNote(TimestampMixin, Base):
     __tablename__ = "evaluation_notes"
+    __table_args__ = (
+        Index("ix_evaluation_notes_author_id", "author_id"),
+        Index("ix_evaluation_notes_evaluation_label_id", "evaluation_label_id"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     evaluation_label_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("evaluation_labels.id", ondelete="CASCADE"), nullable=False)
-    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     evaluation_label: Mapped[EvaluationLabel] = relationship(back_populates="notes")
 
 
 class AuditLog(TimestampMixin, Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_workspace_created", "workspace_id", "created_at"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True, index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(150), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
     entity_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -315,7 +370,7 @@ class RefreshSession(TimestampMixin, Base):
         Index("ix_refresh_sessions_user_id", "user_id"),
         Index("ix_refresh_sessions_family_id", "family_id"),
         Index("ix_refresh_sessions_expires_at", "expires_at"),
-        Index("ix_refresh_sessions_token_hash", "token_hash"),
+        Index("uq_refresh_sessions_token_hash", "token_hash", unique=True),
     )
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

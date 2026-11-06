@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
 import { readCompactTablesPreference, saveCompactTablesPreference } from '../features/settings/preferences'
 import Sidebar from '../components/layout/Sidebar'
+import ConfirmationDialog from '../components/shared/ConfirmationDialog'
 
 export default function SettingsPage() {
   const { user, selectedWorkspace, signOut } = useAuth()
@@ -133,27 +134,16 @@ export default function SettingsPage() {
         </div>
       </main>
 
-      {confirmSignOut && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
-          <section
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="settings-sign-out-title"
-            className="panel w-full max-w-sm p-6"
-          >
-            <h2 id="settings-sign-out-title" className="text-lg font-semibold text-slate-100">Sign out?</h2>
-            <p className="mt-2 text-sm text-slate-300">Your server refresh session will be revoked.</p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button type="button" className="button-ghost" disabled={signingOut} onClick={() => setConfirmSignOut(false)}>
-                Cancel
-              </button>
-              <button type="button" className="button-secondary" disabled={signingOut} onClick={() => void handleSignOut()}>
-                {signingOut ? 'Signing out...' : 'Sign Out'}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+      <ConfirmationDialog
+        open={confirmSignOut}
+        title="Sign out?"
+        description="Your server refresh session will be revoked."
+        confirmLabel="Sign Out"
+        confirmingLabel="Signing out..."
+        confirming={signingOut}
+        onCancel={() => setConfirmSignOut(false)}
+        onConfirm={() => void handleSignOut()}
+      />
     </div>
   )
 }

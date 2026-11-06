@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
-import { Copy } from 'lucide-react'
+import { Copy, RotateCcw, Wand2 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../features/auth/AuthContext'
 import { fetchJobs } from '../features/dashboard/api'
-import { generateBooleanQuery } from '../features/booleanSearch/query'
+import { generateBooleanQuery, splitKeywords } from '../features/booleanSearch/query'
 import type { BooleanOperator, BooleanSearchTemplate } from '../features/booleanSearch/query'
 import Sidebar from '../components/layout/Sidebar'
 import StyledSelect from '../components/shared/StyledSelect'
@@ -21,7 +21,7 @@ export default function BooleanSearchPage() {
   const [excludeText, setExcludeText] = useState('')
   const [operator, setOperator] = useState<BooleanOperator>('OR')
   const [template, setTemplate] = useState<BooleanSearchTemplate>('linkedin')
-  const [queryDraft, setQueryDraft] = useState<{ generated: string; value: string } | null>(null)
+  const [queryDraft, setQueryDraft] = useState<{ source: string; value: string } | null>(null)
   const [copyMessage, setCopyMessage] = useState<string | null>(null)
 
   const selectedJob = jobsQuery.data?.find(job => job.job_id === jobId)
@@ -34,7 +34,17 @@ export default function BooleanSearchPage() {
     includeOperator: operator,
     template,
   }) : '', [selectedJob, includeText, excludeText, operator, template])
-  const query = queryDraft?.generated === generated ? queryDraft.value : generated
+  const query = queryDraft && queryDraft.source === generated ? queryDraft.value : generated
+  const hasManualOverride = queryDraft !== null && queryDraft.source === generated && queryDraft.value !== generated
+
+  const resetFields = () => {
+    setIncludeText('')
+    setExcludeText('')
+    setOperator('OR')
+    setTemplate('linkedin')
+    setQueryDraft(null)
+    setCopyMessage(null)
+  }
 
   const handleCopy = async () => {
     try {
@@ -171,7 +181,7 @@ export default function BooleanSearchPage() {
                       className="textarea-shell min-h-32 font-mono text-sm"
                       value={query}
                       onChange={event => {
-                        setQueryDraft({ generated, value: event.target.value })
+                        setQueryDraft({ source: generated, value: event.target.value })
                         setCopyMessage(null)
                       }}
                     />
@@ -181,8 +191,21 @@ export default function BooleanSearchPage() {
                       <Copy size={16} />
                       Copy Query
                     </button>
+                    <button type="button" className="button-secondary inline-flex items-center gap-2" onClick={() => setQueryDraft(null)}>
+                      <Wand2 size={16} />
+                      Regenerate Query
+                    </button>
+                    <button type="button" className="button-secondary inline-flex items-center gap-2" onClick={resetFields}>
+                      <RotateCcw size={16} />
+                      Reset
+                    </button>
                     {copyMessage && <p role="status" className="text-sm text-slate-300">{copyMessage}</p>}
                   </div>
+                  {hasManualOverride && (
+                    <p className="text-xs text-amber-300">
+                      Manual edits are preserved until the query inputs change. Regenerate or reset to restore the generated version.
+                    </p>
+                  )}
                   <p className="text-xs text-slate-400">
                     This tool only builds query text. It does not search LinkedIn, contact job boards, or source candidate profiles.
                   </p>
@@ -221,8 +244,4 @@ function KeywordField({
       />
     </div>
   )
-}
-
-function splitKeywords(value: string): string[] {
-  return value.split(',').map(keyword => keyword.trim()).filter(Boolean)
 }

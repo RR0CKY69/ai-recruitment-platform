@@ -4,6 +4,13 @@ export interface TokenResponse {
   expires_in: number
 }
 
+export interface RegistrationRequest {
+  full_name: string
+  email: string
+  password: string
+  workspace_name: string
+}
+
 export interface CurrentUser {
   id: string
   email: string

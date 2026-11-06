@@ -126,10 +126,10 @@ def _client(monkeypatch, session, *, authenticated=True):
     return TestClient(app)
 
 
-def test_post_creates_shortlist_and_returns_valid_public_response(monkeypatch):
+def test_post_creates_shortlist_for_assigned_candidate_and_no_auto_association(monkeypatch):
     row = _row()
     session = FakeSession(
-        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, None, None],
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, row[1], None],
         execute_results=[FakeResult([row])],
     )
     client = _client(monkeypatch, session)
@@ -149,10 +149,54 @@ def test_post_creates_shortlist_and_returns_valid_public_response(monkeypatch):
     assert response.json()["recruiter_name"] == "Recruiter Example"
     assert "password_hash" not in response.json()
     assert session.commits == 1
-    saved_pair = next(record for record in session.added if isinstance(record, JobCandidate))
     saved_shortlist = next(record for record in session.added if isinstance(record, Shortlist))
-    assert saved_pair.workspace_id == WORKSPACE_ID
     assert saved_shortlist.added_by_id == USER_ID
+    assert not any(isinstance(record, JobCandidate) for record in session.added)
+
+
+def test_post_rejects_unassigned_candidate(monkeypatch):
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, None],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Candidate is not assigned to this job."
+    assert session.commits == 0
+    assert session.rollbacks == 0
+    assert not any(isinstance(record, JobCandidate) for record in session.added)
+    assert not any(isinstance(record, Shortlist) for record in session.added)
+
+
+def test_post_rejects_candidate_assigned_to_another_job(monkeypatch):
+    # Candidate is assigned only to another job, not `JOB_ID`.
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, None],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Candidate is not assigned to this job."
+    assert not any(isinstance(record, JobCandidate) for record in session.added)
+    assert not any(isinstance(record, Shortlist) for record in session.added)
 
 
 def test_duplicate_post_is_idempotent(monkeypatch):
@@ -175,6 +219,87 @@ def test_duplicate_post_is_idempotent(monkeypatch):
     assert response.status_code == 200
     assert response.json()["shortlist_id"] == str(SHORTLIST_ID)
     assert session.commits == 0
+
+
+def test_post_reactivates_removed_shortlist(monkeypatch):
+    shortlist, association, job, candidate, user = _row(status="REMOVED")
+    row = (shortlist, association, job, candidate, user)
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, association, shortlist],
+        execute_results=[FakeResult([row])],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 201
+    assert shortlist.status == "ACTIVE"
+    assert session.commits == 1
+
+
+def test_post_rejects_hired_candidate(monkeypatch):
+    shortlist, association, job, candidate, user = _row(status="HIRED")
+    row = (shortlist, association, job, candidate, user)
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP, JOB, CANDIDATE, association, shortlist],
+        execute_results=[FakeResult([row])],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "A hired candidate cannot be added to the active shortlist."
+
+
+def test_delete_preserves_candidate_and_association(monkeypatch):
+    row = _row()
+    session = FakeSession(
+        scalar_values=[MEMBERSHIP],
+        execute_results=[FakeResult([row])],
+    )
+    client = _client(monkeypatch, session)
+
+    response = client.delete(
+        f"/shortlists/{SHORTLIST_ID}", params={"workspace_id": str(WORKSPACE_ID)}
+    )
+
+    assert response.status_code == 204
+    assert row[0].status == "REMOVED"
+    assert session.commits == 1
+    assert row[1].candidate_id == CANDIDATE_ID
+    assert row[1].job_id == JOB_ID
+
+
+def test_post_rejects_cross_workspace_job_and_candidate(monkeypatch):
+    session = FakeSession(scalar_values=[MEMBERSHIP, None, None])
+    client = _client(monkeypatch, session)
+
+    response = client.post(
+        "/shortlists",
+        json={
+            "workspace_id": str(WORKSPACE_ID),
+            "job_id": str(JOB_ID),
+            "candidate_id": str(CANDIDATE_ID),
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "The requested job or candidate was not found in this workspace."
 
 
 def test_list_filters_by_job_and_returns_empty_list(monkeypatch):

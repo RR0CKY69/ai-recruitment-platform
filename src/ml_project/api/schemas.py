@@ -10,6 +10,41 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
+class RegisterRequest(BaseModel):
+    """User registration details; password is a plaintext string from the client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
+    workspace_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("Enter a valid email address.")
+        return normalized
+
+    @field_validator("full_name")
+    @classmethod
+    def non_blank_full_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+    @field_validator("workspace_name")
+    @classmethod
+    def non_blank_workspace_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+
 class LoginRequest(BaseModel):
     """Login credentials; SecretStr avoids plaintext in model representations."""
 
@@ -67,6 +102,51 @@ class JobResponse(BaseModel):
     candidate_count: int
 
 
+class JobRequest(BaseModel):
+    """Fields for creating or updating one workspace job."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: UUID
+    title: str = Field(min_length=1, max_length=250)
+    description: str = Field(min_length=1)
+    required_skills: list[str] = Field(default_factory=list)
+    employment_type: str | None = Field(default=None, max_length=100)
+    location: str | None = Field(default=None, max_length=250)
+    minimum_experience_years: int | None = Field(default=None, ge=0)
+    status: Literal["DRAFT", "OPEN", "ON_HOLD", "CLOSED"] = "OPEN"
+
+    @field_validator("title", "description")
+    @classmethod
+    def non_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+    @field_validator("employment_type", "location", mode="before")
+    @classmethod
+    def empty_to_none(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        return value
+
+    @field_validator("required_skills")
+    @classmethod
+    def normalize_and_dedup_skills(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for skill in value:
+            cleaned = skill.strip()
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key not in seen:
+                seen.add(key)
+                normalized.append(cleaned)
+        return normalized
+
+
 class CandidateSkillResponse(BaseModel):
     """Candidate skill details suitable for workspace members."""
 
@@ -85,12 +165,13 @@ class CandidateSourceResponse(BaseModel):
 
 
 class CandidateResponse(BaseModel):
-    """Workspace-visible candidate profile, excluding email and internal fields."""
+    """Workspace-visible candidate profile, excluding internal fields."""
 
     id: UUID
     workspace_id: UUID
     legacy_candidate_id: str | None
     full_name: str
+    email: str | None
     current_title: str | None
     summary: str
     skills: list[CandidateSkillResponse]
@@ -126,6 +207,169 @@ class CandidateDetailResponse(CandidateResponse):
     """Candidate profile plus workspace-scoped job associations."""
 
     associated_jobs: list[CandidateAssociatedJobResponse]
+
+
+class CandidateSourceInput(BaseModel):
+    """Source details provided when creating or updating one candidate profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(min_length=1, max_length=150)
+    source_record_id: str | None = Field(default=None, max_length=300)
+    source_url: str | None = Field(default=None, max_length=2048)
+    authorized_basis: str | None = Field(default=None, max_length=300)
+
+    @field_validator("provider", "authorized_basis")
+    @classmethod
+    def non_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+    @field_validator("source_url")
+    @classmethod
+    def valid_url(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if not re.fullmatch(r"https?://[^\s]+", stripped):
+            raise ValueError("Enter a valid source URL.")
+        return stripped
+
+
+class CandidateRequest(BaseModel):
+    """Fields for creating or updating one workspace candidate profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: UUID
+    full_name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=1, max_length=320)
+    current_title: str | None = Field(default=None, max_length=250)
+    summary: str = Field(min_length=1)
+    experience_years: int | None = Field(default=None, ge=0)
+    location: str | None = Field(default=None, max_length=250)
+    skills: list[str] = Field(default_factory=list)
+    sources: list[CandidateSourceInput] = Field(default_factory=list)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("Enter a valid email address.")
+        return normalized
+
+    @field_validator("full_name")
+    @classmethod
+    def non_blank_full_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+    @field_validator("summary")
+    @classmethod
+    def non_blank_summary(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Field cannot be blank.")
+        return stripped
+
+    @field_validator("current_title", "location", mode="before")
+    @classmethod
+    def empty_to_none(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("skills")
+    @classmethod
+    def normalize_and_dedup_skills(cls, value: list[str]) -> list[str]:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for skill in value:
+            cleaned = skill.strip()
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key not in seen:
+                seen.add(key)
+                normalized.append(cleaned)
+        return normalized
+
+
+class CandidateProfileResponse(BaseModel):
+    """Candidate profile returned by create and update endpoints; includes email."""
+
+    id: UUID
+    workspace_id: UUID
+    legacy_candidate_id: str | None
+    full_name: str
+    email: str | None
+    current_title: str | None
+    summary: str
+    skills: list[CandidateSkillResponse]
+    sources: list[CandidateSourceResponse]
+    experience_years: int | None
+    location: str | None
+
+
+class ResumeCandidateDraft(BaseModel):
+    """Parsed resume draft for user review before saving a candidate profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str | None = None
+    email: str | None = None
+    current_title: str | None = None
+    summary: str | None = None
+    experience_years: int | None = None
+    location: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    sources: list[CandidateSourceInput] = Field(default_factory=list)
+
+
+class ResumeUploadResponse(BaseModel):
+    """Response for resume upload; parsed_candidate may be null when nothing useful is extracted."""
+
+    parsed_candidate: ResumeCandidateDraft | None
+
+
+class AssignCandidateRequest(BaseModel):
+    """IDs needed to assign one workspace candidate to one workspace job."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: UUID
+    candidate_id: UUID
+
+
+class JobCandidateAssignmentResponse(BaseModel):
+    """Assigned candidate card returned by job-candidate assignment endpoints."""
+
+    candidate_id: UUID
+    workspace_id: UUID
+    full_name: str
+    email: str | None
+    current_title: str | None
+    summary: str
+    experience_years: int | None
+    location: str | None
+    skills: list[CandidateSkillResponse]
+    sources: list[CandidateSourceResponse]
+    stage: str
+
+
+class UpdateJobCandidateStageRequest(BaseModel):
+    """Stage update for one existing job-candidate assignment in a workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal["SOURCED", "REVIEWING", "SHORTLISTED", "REJECTED", "HIRED"]
 
 
 class ShortlistCreateRequest(BaseModel):

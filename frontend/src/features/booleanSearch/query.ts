@@ -19,16 +19,29 @@ const DESCRIPTION_STOP_WORDS = new Set([
   'with', 'work', 'years', 'you', 'your',
 ])
 
+function normalizeTerm(term: string): string {
+  return term.trim().replace(/\s+/g, ' ')
+}
+
 function uniqueTerms(terms: string[]): string[] {
   const seen = new Set<string>()
   return terms
-    .map(term => term.trim())
+    .map(normalizeTerm)
     .filter(term => {
       const key = term.toLocaleLowerCase()
       if (!key || seen.has(key)) return false
       seen.add(key)
       return true
     })
+}
+
+export function splitKeywords(value: string): string[] {
+  return uniqueTerms(
+    value
+      .split(/[\n,;]+/)
+      .map(part => part.trim())
+      .filter(Boolean),
+  )
 }
 
 function descriptionKeywords(description: string): string[] {
@@ -44,30 +57,33 @@ function descriptionKeywords(description: string): string[] {
 }
 
 function quoteTerm(term: string): string {
-  const value = term.trim()
-  return /\s/.test(value) ? `"${value.replaceAll('"', '\\"')}"` : value
+  const value = normalizeTerm(term)
+  if (!value) return ''
+  const escaped = value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+  return /\s|[()]/.test(value) ? `"${escaped}"` : value
 }
 
 export function generateBooleanQuery(input: BooleanQueryInput): string {
-  const title = input.title.trim()
+  const title = normalizeTerm(input.title)
   const titlePart = title ? quoteTerm(title) : ''
-  const skills = uniqueTerms([
+  const skillTerms = uniqueTerms([
     ...input.requiredSkills,
     ...(input.requiredSkills.length === 0 ? descriptionKeywords(input.description) : []),
     ...input.includeKeywords,
   ])
-  const skillPart = skills.length > 0
-    ? `(${skills.map(quoteTerm).join(` ${input.includeOperator} `)})`
+  const skillPart = skillTerms.length > 0
+    ? `(${skillTerms.map(quoteTerm).join(` ${input.includeOperator} `)})`
     : ''
   const excluded = uniqueTerms(input.excludeKeywords)
   const excludePart = excluded.length > 0
     ? `NOT (${excluded.map(quoteTerm).join(' OR ')})`
     : ''
+
   const query = [titlePart, skillPart].filter(Boolean).join(' AND ')
   const body = [query, excludePart].filter(Boolean).join(' ')
-
   if (!body) return ''
-  if (input.template === 'google_xray' && body) return `site:linkedin.com/in/ ${body}`
-  if (input.template === 'linkedin' && body) return `(${body})`
+
+  if (input.template === 'google_xray') return `site:linkedin.com/in/ ${body}`
+  if (input.template === 'linkedin') return `(${body})`
   return body
 }

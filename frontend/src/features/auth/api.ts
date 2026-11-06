@@ -1,11 +1,15 @@
 import { apiClient } from '../../services/apiClient';
-import type { CurrentUser, TokenResponse, Workspace } from '../../types/auth';
+import type { CurrentUser, RegistrationRequest, TokenResponse, Workspace } from '../../types/auth';
 
 let refreshPromise: Promise<TokenResponse> | null = null;
 
 export async function login(email: string, password: string): Promise<TokenResponse> {
   const { data } = await apiClient.post<TokenResponse>('/auth/login', { email, password });
   return data;
+}
+
+export async function registerUser(request: RegistrationRequest): Promise<void> {
+  await apiClient.post<void>('/auth/register', request);
 }
 
 export function refresh(): Promise<TokenResponse> {

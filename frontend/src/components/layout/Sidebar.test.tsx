@@ -55,15 +55,33 @@ test('Keeps navigation links accessible when labels are visually collapsed', () 
 
   expect(screen.getByRole('link', { name: 'Matching' })).toHaveAttribute('href', '/matching')
   expect(screen.getByRole('link', { name: 'Shortlisted' })).toHaveAttribute('href', '/shortlisted')
+  expect(screen.getByRole('link', { name: 'Pipeline' })).toHaveAttribute('href', '/pipeline')
+  expect(screen.getByRole('link', { name: 'Workspace & Team' })).toHaveAttribute('href', '/workspace-team')
+  expect(screen.getByRole('heading', { name: 'Recruitment' })).toBeInTheDocument()
   const collapsedLink = screen.getByRole('link', { name: 'Matching' })
   expect(collapsedLink).toHaveAttribute('title', 'Matching')
   expect(collapsedLink).toHaveClass('h-10', 'w-10', 'shrink-0')
+  expect(container.querySelector('aside')).toHaveClass('overflow-x-hidden')
+  expect(container.querySelector('nav')).toHaveClass('overflow-x-hidden', 'min-h-0')
   expect(collapsedLink.querySelector('svg')).toHaveAttribute('width', '21')
   expect(collapsedLink.querySelector('svg')).toHaveAttribute('height', '21')
-  expect(container.querySelector('nav')).toHaveClass('space-y-1.5')
+  expect(container.querySelector('nav')).toHaveClass('overflow-y-auto')
 
   fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }))
   expect(screen.getByRole('link', { name: 'Matching' }).querySelector('svg')).toHaveAttribute('width', '17')
+})
+
+test('marks record-detail routes active on their parent navigation item', () => {
+  render(
+    <MemoryRouter initialEntries={['/jobs/job-1']}>
+      <Routes>
+        <Route path="/jobs/:jobId" element={<Sidebar />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  expect(screen.getByRole('link', { name: 'Jobs' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.queryByRole('link', { name: 'Job Detail' })).not.toBeInTheDocument()
 })
 
 test('Confirms sign out, calls the existing auth action, and navigates to login', async () => {

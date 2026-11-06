@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateBooleanQuery } from './query'
+import { generateBooleanQuery, splitKeywords } from './query'
 
 const baseInput = {
   title: 'Python Developer',
@@ -34,6 +34,15 @@ describe('generateBooleanQuery', () => {
       excludeKeywords: [],
       template: 'google_xray',
     })).toBe('site:linkedin.com/in/ "Python Developer" AND (APIs OR Django OR FastAPI)')
+  })
+
+  it('normalizes whitespace and drops empty or duplicate keywords', () => {
+    expect(splitKeywords('Python,  Django, python, , FastAPI;  Product Manager')).toEqual([
+      'Python',
+      'Django',
+      'FastAPI',
+      'Product Manager',
+    ])
   })
 
   it('does not make a query for missing information', () => {

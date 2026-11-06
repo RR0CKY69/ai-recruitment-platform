@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, PencilLine } from 'lucide-react'
 import Sidebar from '../components/layout/Sidebar'
 import { useAuth } from '../features/auth/AuthContext'
 import { fetchCandidate, fetchJobs } from '../features/dashboard/api'
 import { apiClient } from '../services/apiClient'
 import StyledSelect from '../components/shared/StyledSelect'
+import CandidateEditorDialog from '../components/candidates/CandidateEditorDialog'
+import { updateCandidate, type CandidateInput } from '../features/candidates/api'
+import { getApiErrorMessage } from '../lib/apiErrors'
 
 interface ShortlistItem {
   candidate_id: string
@@ -22,6 +24,7 @@ export default function CandidateDetailPage() {
   const queryClient = useQueryClient()
   const [jobId, setJobId] = useState('')
   const [shortlistMessage, setShortlistMessage] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
 
   const candidateQuery = useQuery({
     queryKey: ['candidate', workspaceId, candidateId],
@@ -51,8 +54,17 @@ export default function CandidateDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['shortlists', workspaceId] })
     },
     onError: (error: unknown) => {
-      const detail = axios.isAxiosError(error) ? error.response?.data?.detail : undefined
-      setShortlistMessage(typeof detail === 'string' ? detail : 'Unable to add candidate to the shortlist.')
+      setShortlistMessage(getApiErrorMessage(error, 'Unable to add candidate to the shortlist.'))
+    },
+  })
+  const updateMutation = useMutation({
+    mutationFn: (input: CandidateInput) => updateCandidate(workspaceId!, candidateId!, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['candidate', workspaceId, candidateId] }),
+        queryClient.invalidateQueries({ queryKey: ['candidates', workspaceId] }),
+      ])
+      setEditing(false)
     },
   })
 
@@ -70,7 +82,7 @@ export default function CandidateDetailPage() {
             <ArrowLeft size={16} /> Back to candidates
           </Link>
           {candidateQuery.isLoading && <p className="text-slate-300">Loading candidate profile...</p>}
-          {candidateQuery.isError && <p role="alert" className="text-red-300">Failed to load candidate profile.</p>}
+          {candidateQuery.isError && <p role="alert" className="text-red-300">{getApiErrorMessage(candidateQuery.error, 'Failed to load candidate profile.')}</p>}
           {!candidateQuery.isLoading && !candidateQuery.isError && !candidate && (
             <p className="text-slate-300">This candidate is unavailable in the selected workspace.</p>
           )}
@@ -82,6 +94,9 @@ export default function CandidateDetailPage() {
                   <h1 className="page-title">{candidate.full_name}</h1>
                   <p className="mt-1 text-slate-300">{candidate.current_title ?? 'Title unavailable'}</p>
                 </div>
+                <button type="button" className="button-secondary inline-flex items-center justify-center gap-2" onClick={() => setEditing(true)}>
+                  <PencilLine size={16} aria-hidden="true" /> Edit profile
+                </button>
               </div>
 
               <section className="panel space-y-5 p-4 md:p-5" aria-label="Candidate information">
@@ -92,7 +107,7 @@ export default function CandidateDetailPage() {
                   ).join(', ') : 'Unavailable'} />
                   <ProfileField label="Experience" value={candidate.experience_years == null ? 'Unavailable' : `${candidate.experience_years} years`} />
                   <ProfileField label="Location" value={candidate.location ?? 'Unavailable'} />
-                  <ProfileField label="Email" value="Unavailable (not provided by the API)" />
+                  <ProfileField label="Email" value={candidate.email ?? 'Unavailable (not provided by the API)'} />
                 </div>
                 <div>
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sources</h2>
@@ -142,7 +157,7 @@ export default function CandidateDetailPage() {
               <section className="panel mt-6 max-w-2xl p-4 md:p-5" aria-label="Add candidate to shortlist">
                 <h2 className="section-title">Shortlist for a job</h2>
                 {jobsQuery.isLoading && <p className="text-sm text-slate-300">Loading workspace jobs...</p>}
-                {jobsQuery.isError && <p role="alert" className="text-sm text-red-300">Failed to load workspace jobs.</p>}
+                {jobsQuery.isError && <p role="alert" className="text-sm text-red-300">{getApiErrorMessage(jobsQuery.error, 'Failed to load workspace jobs.')}</p>}
                 {!jobsQuery.isLoading && !jobsQuery.isError && (
                   <div className="space-y-3">
                     <label className="block text-sm text-slate-300" htmlFor="candidate-shortlist-job">Select a job in this workspace</label>
@@ -173,6 +188,19 @@ export default function CandidateDetailPage() {
           )}
         </div>
       </main>
+      <CandidateEditorDialog
+        open={editing}
+        candidate={candidate}
+        title="Edit candidate profile"
+        pending={updateMutation.isPending}
+        error={updateMutation.error}
+        onClose={() => {
+          if (updateMutation.isPending) return
+          setEditing(false)
+          updateMutation.reset()
+        }}
+        onSubmit={input => updateMutation.mutate(input)}
+      />
     </div>
   )
 }

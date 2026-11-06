@@ -8,8 +8,8 @@ from typing import Annotated
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, case, func, select
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, selectinload
 
 from ml_project.api.dependencies import (
     get_api_session,
@@ -28,7 +28,6 @@ from ml_project.matching import match_candidates
 from ml_project.matching_signals import assess_candidate, combined_score
 from ml_project.models import (
     Candidate,
-    CandidateSkill,
     Job,
     JobCandidate,
     JobRequirement,
@@ -88,13 +87,6 @@ def _required_skills(session: Session, job_id: uuid.UUID) -> str:
     return ";".join(r.description for r in rows if r.description)
 
 
-def _candidate_skills(session: Session, candidate_id: uuid.UUID) -> str:
-    rows = session.scalars(
-        select(CandidateSkill).where(CandidateSkill.candidate_id == candidate_id)
-    ).all()
-    return ";".join(s.name for s in rows if s.name)
-
-
 def _job_dict(job: Job, required_skills: str) -> dict:
     return {
         "required_skills": required_skills,
@@ -125,16 +117,39 @@ def run_matching(
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found in workspace.")
 
-    candidates = session.scalars(
-        select(Candidate).where(Candidate.workspace_id == payload.workspace_id)
+    associations = session.scalars(
+        select(JobCandidate)
+        .options(selectinload(JobCandidate.candidate).selectinload(Candidate.skills))
+        .where(
+            JobCandidate.workspace_id == payload.workspace_id,
+            JobCandidate.job_id == job.id,
+        )
     ).all()
 
     required_skills = _required_skills(session, job.id)
 
-    # Build DataFrame for TF-IDF
+    if not associations:
+        try:
+            record_audit_event(
+                session,
+                workspace_id=payload.workspace_id,
+                actor_id=user.id,
+                action="matching.run",
+                entity_type="job",
+                entity_id=job.id,
+                details={"candidate_count": 0},
+            )
+            session.commit()
+        except SQLAlchemyError:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Matching could not be completed.")
+        return []
+
+    # Build DataFrame for TF-IDF from explicitly assigned candidates only.
     rows = []
-    for c in candidates:
-        skills = _candidate_skills(session, c.id)
+    for assoc in associations:
+        c = assoc.candidate
+        skills = ";".join(s.name for s in c.skills if s.name)
         rows.append({
             "candidate_id": str(c.id),
             "name": c.full_name,
@@ -149,37 +164,9 @@ def run_matching(
     score_map = {str(r["candidate_id"]): float(r["similarity_score"]) for _, r in ranked.iterrows()}
 
     results: list[MatchingResultResponse] = []
-    for c in candidates:
-        skills = _candidate_skills(session, c.id)
-        assoc = session.scalar(
-            select(JobCandidate).where(
-                JobCandidate.workspace_id == payload.workspace_id,
-                JobCandidate.job_id == job.id,
-                JobCandidate.candidate_id == c.id,
-            )
-        )
-        if assoc is None:
-            assoc = JobCandidate(
-                workspace_id=payload.workspace_id,
-                job_id=job.id,
-                candidate_id=c.id,
-                created_by_id=user.id,
-            )
-            session.add(assoc)
-            try:
-                session.flush()
-            except IntegrityError:
-                session.rollback()
-                assoc = session.scalar(
-                    select(JobCandidate).where(
-                        JobCandidate.workspace_id == payload.workspace_id,
-                        JobCandidate.job_id == job.id,
-                        JobCandidate.candidate_id == c.id,
-                    )
-                )
-                if assoc is None:
-                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conflict creating association.")
-
+    for assoc in associations:
+        c = assoc.candidate
+        skills = ";".join(s.name for s in c.skills if s.name)
         signals = assess_candidate(_job_dict(job, required_skills), _candidate_dict(c, skills))
         combined = combined_score(
             score_map.get(str(c.id), 0.0),
@@ -188,7 +175,7 @@ def run_matching(
             str(signals["location_compatibility"]),
         )
 
-        # Upsert MatchResult
+        # Upsert MatchResult against the existing association only. Never create JobCandidate associations.
         existing = session.scalar(
             select(MatchResult).where(
                 MatchResult.job_candidate_id == assoc.id,
@@ -246,7 +233,7 @@ def run_matching(
             experience_compatibility=mr.experience_compatibility,
             location_compatibility=mr.location_compatibility,
             semantic_similarity=None,
-            hybrid_score=None,
+            hybrid_score=mr.hybrid_score,
             explanation=mr.explanation,
         ))
 
@@ -258,7 +245,7 @@ def run_matching(
             action="matching.run",
             entity_type="job",
             entity_id=job.id,
-            details={"candidate_count": len(candidates)},
+            details={"candidate_count": len(associations)},
         )
         session.commit()
     except SQLAlchemyError:

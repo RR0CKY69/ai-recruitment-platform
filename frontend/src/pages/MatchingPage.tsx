@@ -5,10 +5,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Sparkles } from 'lucide-react'
 import { fetchJobs } from '../features/dashboard/api'
-import { runMatching, fetchMatching } from '../features/matching/api'
+import { fetchMatching, runMatching } from '../features/matching/api'
 import { apiClient } from '../services/apiClient'
 import Sidebar from '../components/layout/Sidebar'
 import StyledSelect from '../components/shared/StyledSelect'
+import { SkillChips } from '../components/shared/Primitives'
 
 interface ShortlistRecord {
   candidate_id: string
@@ -35,14 +36,7 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
   const jobs = jobsQuery.data
   const [jobId, setJobId] = useState('')
   const [feedback, setFeedback] = useState<{ candidateId: string; message: string; error: boolean } | null>(null)
-
-  const run = useMutation({
-    mutationFn: (variables: { workspaceId: string; jobId: string }) =>
-      runMatching(variables.workspaceId, variables.jobId),
-    onSuccess: (data, variables) => {
-      qc.setQueryData(['matching', variables.workspaceId, variables.jobId], data)
-    },
-  })
+  const [runError, setRunError] = useState<string | null>(null)
 
   const { data: results, isLoading, isError: matchingQueryIsError, error: matchingQueryError } = useQuery({
     queryKey: ['matching', wsId, jobId],
@@ -56,6 +50,25 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
       params: { workspace_id: wsId, job_id: jobId },
     })).data,
     enabled: !!wsId && !!jobId,
+  })
+
+  const runMatchingMutation = useMutation({
+    mutationFn: () => runMatching(wsId!, jobId),
+    onMutate: () => {
+      setRunError(null)
+      setFeedback(null)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['matching', wsId, jobId] })
+      qc.invalidateQueries({ queryKey: ['shortlists', wsId, jobId] })
+    },
+    onError: (error) => {
+      const detail: unknown =
+        error && typeof error === 'object' && 'response' in error
+          ? (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+          : undefined
+      setRunError(typeof detail === 'string' ? detail : 'Matching could not be completed.')
+    },
   })
 
   const shortlist = useMutation({
@@ -89,11 +102,12 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
   const list = results ?? []
   const selectedJob = jobs?.find(job => job.job_id === jobId)
   const shortlistedIds = new Set((shortlistsQuery.data ?? []).map(item => item.candidate_id))
+  const canRun = !!wsId && !!jobId && !runMatchingMutation.isPending
 
   return (
     <div className="app-shell flex">
       <Sidebar />
-      <main className="flex-1 p-4 md:p-6">
+      <main className="min-w-0 flex-1 p-4 md:p-6">
         <div className="page-shell">
           <div className="page-header">
             <div>
@@ -107,20 +121,23 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
                 placeholder="Select job"
                 options={(jobs ?? []).map(job => ({ value: job.job_id, label: job.title }))}
                 onValueChange={value => {
-                setJobId(value)
-                setFeedback(null)
-              }} />
-              <button disabled={!jobId || run.isPending} onClick={() => {
-                if (wsId && jobId) run.mutate({ workspaceId: wsId, jobId })
-              }} className="button-primary whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-70">
-                {run.isPending ? 'Running...' : 'Run Matching'}
+                  setJobId(value)
+                  setFeedback(null)
+                  setRunError(null)
+                }} />
+              <button
+                disabled={!canRun}
+                onClick={() => runMatchingMutation.mutate()}
+                className={`button-primary whitespace-nowrap ${runMatchingMutation.isPending ? 'opacity-70 cursor-not-allowed' : ''}`}
+              >
+                {runMatchingMutation.isPending ? 'Running matching…' : 'Run Matching'}
               </button>
+              {runError && <span className="text-xs text-red-300">{runError}</span>}
             </div>
           </div>
 
           {jobsQuery.isLoading && <p role="status" className="mb-3 text-sm text-slate-300">Loading workspace jobs...</p>}
           {jobsQuery.isError && <p role="alert" className="mb-3 text-sm text-red-300">{getErrorMessage(jobsQuery.error, 'Failed to load workspace jobs.')}</p>}
-          {run.isError && <p role="alert" className="text-red-300">{getErrorMessage(run.error, 'Matching failed.')}</p>}
           {jobId && selectedJob && (
             <section className="panel mb-5 p-4 md:p-5" aria-label="Selected job requirements">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -137,9 +154,9 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
               </div>
               <div className="mt-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Required skills</h3>
-                {selectedJob.required_skills.length
-                  ? <ul className="mt-2 flex flex-wrap gap-2">{selectedJob.required_skills.map(skill => <li key={skill} className="rounded-full border border-indigo-400/30 bg-indigo-400/10 px-2.5 py-1 text-xs text-indigo-100">{skill}</li>)}</ul>
-                  : <p className="mt-1 text-sm text-slate-400">No required skills listed.</p>}
+                <div className="mt-2">
+                  <SkillChips skills={selectedJob.required_skills} label="Required skills" />
+                </div>
               </div>
             </section>
           )}
@@ -147,8 +164,8 @@ function MatchingWorkspace({ wsId }: { wsId: string | undefined }) {
           {isLoading && <p className="text-slate-300">Loading...</p>}
           {matchingQueryIsError && jobId && <p role="alert" className="text-red-300">{getErrorMessage(matchingQueryError, 'Failed to load matching results.')}</p>}
           {shortlistsQuery.isError && jobId && <p role="alert" className="mb-3 text-sm text-amber-200">Could not check current shortlist entries. The API still prevents duplicate active entries.</p>}
-          {shortlist.isPending && <p role="status" className="mb-3 text-sm text-slate-300">Adding candidate to shortlist...</p>}
-          {!isLoading && !matchingQueryIsError && jobId && list.length === 0 && <p className="text-slate-300">No matching results. Run matching.</p>}
+          {shortlist.isPending && <p className="text-slate-300">Adding candidate to shortlist...</p>}
+          {!isLoading && !matchingQueryIsError && jobId && list.length === 0 && <p className="text-slate-300">No stored matching results for this job.</p>}
 
           {list.length > 0 && (
             <div className="panel overflow-x-auto">

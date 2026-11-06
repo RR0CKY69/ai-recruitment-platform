@@ -48,14 +48,11 @@ def generate_refresh_token() -> str:
 
 
 def hash_refresh_token(token: str) -> str:
-    """Hash a refresh token for storage. Use HMAC-SHA256 if a secret is configured, else SHA-256."""
+    """Hash a refresh token for storage using HMAC-SHA256 when a secret is configured."""
     if not token:
         raise ValueError("Refresh token cannot be empty.")
-    try:
-        settings = get_refresh_token_settings()
-    except Exception:
-        settings = None
-    if settings and settings.hash_secret:
+    settings = get_refresh_token_settings()
+    if settings.hash_secret:
         digest = hmac.new(settings.hash_secret.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
         return digest
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

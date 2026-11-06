@@ -12,6 +12,7 @@ from ml_project.models import (
     AuditLog,
     Candidate,
     Job,
+    JobCandidate,
     User,
     Workspace,
     WorkspaceMember,
@@ -64,6 +65,13 @@ def _seed(factory):
         candidate = Candidate(workspace_id=workspace.id, full_name="Candidate", summary="Summary")
         session.add_all([job, candidate])
         session.flush()
+        session.add(
+            JobCandidate(
+                workspace_id=workspace.id,
+                job_id=job.id,
+                candidate_id=candidate.id,
+            )
+        )
         return user.email, workspace.id, job.id, candidate.id
 
 
@@ -139,7 +147,7 @@ def test_shortlist_audit_fields_and_cross_workspace(audit_client, monkeypatch):
     email, workspace_id, job_id, candidate_id = _seed(factory)
     # create second workspace/member not accessible
     with factory.begin() as session:
-        from ml_project.models import Workspace, WorkspaceMember, User, Job, Candidate
+        from ml_project.models import Candidate, Job, Workspace
         other = Workspace(name="Other", slug="other")
         session.add(other)
         session.flush()
@@ -193,6 +201,6 @@ def test_shortlist_audit_insertion_failure_rolls_back(audit_client, monkeypatch)
     with pytest.raises(RuntimeError):
         client.post("/shortlists", json=payload, headers=headers)
     with factory() as session:
-        from ml_project.models import Shortlist, AuditLog
+        from ml_project.models import AuditLog, Shortlist
         assert session.query(Shortlist).count() == 0
         assert session.query(AuditLog).count() == 0

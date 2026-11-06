@@ -4,7 +4,7 @@ from uuid import uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,11 +12,12 @@ from ml_project.api.dependencies import get_api_session
 from ml_project.api.main import app
 from ml_project.api.rate_limit import InMemoryLoginRateLimiter, client_rate_limit_key
 from ml_project.api.routers import auth as auth_router
-from ml_project.config import get_jwt_settings, get_login_rate_limit_settings
-from ml_project.models import Base, RefreshSession, User
-from ml_project.security import hash_password, hash_refresh_token
-from ml_project.config import get_refresh_token_settings
-
+from ml_project.config import (
+    get_jwt_settings,
+    get_login_rate_limit_settings,
+)
+from ml_project.models import Base, RefreshSession, User, Workspace, WorkspaceMember
+from ml_project.security import hash_password, hash_refresh_token, verify_password
 
 TEST_JWT_SECRET = "test-only-secret-key-with-at-least-32-bytes"
 TEST_PASSWORD = "Correct test passphrase 2026!"
@@ -45,10 +46,10 @@ def auth_client(monkeypatch):
     monkeypatch.setenv("REFRESH_COOKIE_PATH", "/")
     monkeypatch.setattr("ml_project.config.load_dotenv", lambda *_args, **_kwargs: None)
     try:
-        from ml_project.config import get_refresh_token_settings, get_cors_origins
+        from ml_project.config import get_cors_origins, get_refresh_token_settings
         get_refresh_token_settings.cache_clear()
         get_cors_origins.cache_clear()
-    except Exception:
+    except Exception:  # noqa: S110, BLE001 - cache clearing failures are non-fatal
         pass
 
     engine = create_engine(
@@ -948,6 +949,7 @@ def test_refresh_reuse_revokes_family(auth_client):
     r1 = client.post("/auth/refresh", headers={"Origin": "http://localhost:5173"})
     assert r1.status_code == 200
     # reuse old cookie
+    client.cookies.clear()
     client.cookies.set("refresh_token", old_cookie)
     r2 = client.post("/auth/refresh", headers={"Origin": "http://localhost:5173"})
     assert r2.status_code == 401
@@ -1060,7 +1062,7 @@ def test_refresh_token_hash_uniqueness_and_dedup_migration(tmp_path):
     # Check unique index exists
     idxs = {i["name"]: i for i in insp.get_indexes("refresh_sessions")}
     # Either unique index present
-    assert any("token_hash" in str(k) for k in idxs.keys())
+    assert any("token_hash" in str(k) for k in idxs)
     command.downgrade(cfg, "base")
     assert inspect(engine).get_table_names() == ["alembic_version"]
 
@@ -1081,3 +1083,209 @@ def test_concurrent_refresh_transaction_behavior_documented(auth_client):
     r2 = client.post("/auth/refresh", headers={"Origin": "http://localhost:5173"})
     assert r2.status_code == 200
     # Note: SQLite does not prove PostgreSQL row-locking behavior for true concurrency; transaction usage present.
+
+
+def test_register_creates_user_workspace_and_admin_membership(auth_client):
+    client, factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.text == ""
+
+    with factory.begin() as session:
+        user = session.scalar(
+            select(User).where(func.lower(User.email) == "jordan@example.com")
+        )
+        assert user is not None
+        assert user.full_name == "Jordan Lee"
+        assert user.is_active is True
+        assert verify_password("UniquePass123", user.password_hash)
+
+        workspace = session.scalar(
+            select(Workspace).where(Workspace.created_by_id == user.id)
+        )
+        assert workspace is not None
+        assert workspace.name == "Apex Talent"
+        assert workspace.slug.startswith("apex-talent-")
+
+        membership = session.scalar(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace.id,
+                WorkspaceMember.user_id == user.id,
+            )
+        )
+        assert membership is not None
+        assert membership.role == "ADMIN"
+
+
+def test_register_normalizes_email(auth_client):
+    client, factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "  JORDAN@EXAMPLE.COM ",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 201
+
+    with factory.begin() as session:
+        user = session.scalar(
+            select(User).where(func.lower(User.email) == "jordan@example.com")
+        )
+        assert user is not None
+        assert user.email == "jordan@example.com"
+
+
+def test_register_rejects_duplicate_email(auth_client):
+    client, factory = auth_client
+    _add_user(factory, email="jordan@example.com")
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "A user with this email already exists."
+    }
+
+
+def test_register_can_login_after_registration(auth_client):
+    client, _factory = auth_client
+
+    client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    login_resp = client.post(
+        "/auth/login",
+        json={"email": "jordan@example.com", "password": "UniquePass123"},
+        headers={"Origin": "http://localhost:5173"},
+    )
+    assert login_resp.status_code == 200
+    body = login_resp.json()
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] == 15 * 60
+
+
+def test_register_rejects_invalid_email(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "not-an-email",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_rejects_blank_full_name(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "   ",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_rejects_short_password(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "short",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_rejects_blank_workspace_name(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "   ",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_rejects_missing_fields(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            # missing password and workspace_name
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_does_not_issue_tokens(auth_client):
+    client, _factory = auth_client
+
+    response = client.post(
+        "/auth/register",
+        json={
+            "full_name": "Jordan Lee",
+            "email": "jordan@example.com",
+            "password": "UniquePass123",
+            "workspace_name": "Apex Talent",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.text == ""
+    assert response.cookies.get("refresh_token") is None

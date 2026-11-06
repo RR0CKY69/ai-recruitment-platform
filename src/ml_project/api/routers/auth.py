@@ -8,22 +8,28 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ml_project.api.dependencies import get_api_session, get_current_user
 from ml_project.api.rate_limit import InMemoryLoginRateLimiter, client_rate_limit_key
-from ml_project.api.schemas import CurrentUserResponse, LoginRequest, TokenResponse
+from ml_project.api.schemas import (
+    CurrentUserResponse,
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+)
 from ml_project.config import (
     get_cors_origins,
     get_jwt_settings,
     get_login_rate_limit_settings,
     get_refresh_token_settings,
 )
-from ml_project.models import RefreshSession, User
+from ml_project.models import RefreshSession, User, Workspace, WorkspaceMember
 from ml_project.security import (
     create_access_token,
     generate_refresh_token,
+    hash_password,
     hash_refresh_token,
     verify_dummy_password,
     verify_password,
@@ -67,7 +73,7 @@ def _clear_refresh_cookie(response: Response) -> None:
 def _validate_origin(request: Request) -> None:
     try:
         origins = set(get_cors_origins())
-    except Exception:
+    except Exception:  # noqa: BLE001 - intentional broad catch for config errors
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed.") from None
     origin = request.headers.get("origin")
     if origin and origin in origins:
@@ -298,3 +304,77 @@ def current_user(user: Annotated[User, Depends(get_current_user)]) -> CurrentUse
         full_name=user.full_name,
         is_active=user.is_active,
     )
+
+
+def _generate_workspace_slug(name: str) -> str:
+    """Create a URL-safe, unique workspace slug from a display name."""
+    import secrets
+
+    base = "".join(ch.lower() if ch.isalnum() else "-" for ch in name.strip())
+    base = "-".join(part for part in base.split("-") if part)[:60] or "workspace"
+    suffix = secrets.token_urlsafe(4)
+    return f"{base}-{suffix}"
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(
+    credentials: RegisterRequest,
+    session: Annotated[Session, Depends(get_api_session)],
+) -> Response:
+    """Register a new user with an initial workspace and ADMIN membership.
+
+    All writes occur atomically. No authentication tokens are issued; the user
+    must log in separately after registration succeeds.
+    """
+    normalized_email = credentials.email
+    existing = session.scalar(
+        select(User).where(func.lower(User.email) == normalized_email)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        )
+
+    workspace_slug = _generate_workspace_slug(credentials.workspace_name)
+
+    try:
+        user = User(
+            email=normalized_email,
+            password_hash=hash_password(credentials.password),
+            full_name=credentials.full_name,
+            is_active=True,
+        )
+        session.add(user)
+        session.flush()
+
+        workspace = Workspace(
+            name=credentials.workspace_name,
+            slug=workspace_slug,
+            created_by_id=user.id,
+        )
+        session.add(workspace)
+        session.flush()
+
+        session.add(
+            WorkspaceMember(
+                workspace_id=workspace.id,
+                user_id=user.id,
+                role="ADMIN",
+            )
+        )
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        ) from None
+    except SQLAlchemyError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The database operation could not be completed.",
+        ) from None
+
+    return Response(status_code=status.HTTP_201_CREATED)

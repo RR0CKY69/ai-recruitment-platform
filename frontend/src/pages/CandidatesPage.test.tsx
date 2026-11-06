@@ -8,7 +8,7 @@ vi.mock('../features/auth/AuthContext', () => ({
   useAuth: () => ({ selectedWorkspace: { workspace_id: 'workspace-1' } }),
 }))
 vi.mock('../services/apiClient', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn() },
 }))
 vi.mock('../components/layout/Sidebar', () => ({ default: () => null }))
 
@@ -21,6 +21,7 @@ const candidateListResponse = [{
   workspace_id: 'workspace-1',
   legacy_candidate_id: 'C001',
   full_name: 'Candidate One',
+  email: 'candidate@example.test',
   current_title: 'Platform Engineer',
   summary: 'Builds reliable systems.',
   skills: [{ name: 'Python', normalized_name: 'python', years_experience: 5 }],
@@ -31,6 +32,10 @@ const candidateListResponse = [{
 
 const candidateDetailResponse = {
   ...candidateListResponse[0],
+  sources: [
+    ...candidateListResponse[0].sources,
+    { provider: 'referral', source_record_id: 'R001', source_url: null, authorized_basis: 'Candidate referral' },
+  ],
   associated_jobs: [{
     job_id: 'job-1',
     title: 'Platform Engineer',
@@ -124,7 +129,7 @@ test('candidate name opens a full profile and adds the candidate to a selected w
   expect(screen.getByRole('link', { name: 'Platform Engineer' })).toHaveAttribute('href', '/jobs/job-1')
   expect(screen.getByText(/TF-IDF 75%/)).toBeInTheDocument()
   expect(screen.getByText('candidate_provided')).toBeInTheDocument()
-  expect(screen.getByText('Unavailable (not provided by the API)')).toBeInTheDocument()
+  expect(screen.getByText('candidate@example.test')).toBeInTheDocument()
 
   await selectJob()
   fireEvent.click(screen.getByRole('button', { name: 'Add to shortlist' }))
@@ -148,7 +153,7 @@ test('candidate search filters actual workspace candidates and clear restores th
   renderCandidates()
   expect(await screen.findByRole('link', { name: 'Candidate One' })).toBeInTheDocument()
   fireEvent.change(screen.getByRole('textbox', { name: 'Search candidates' }), { target: { value: 'absent' } })
-  expect(screen.getByText('No candidates found.')).toBeInTheDocument()
+  expect(screen.getByText('No matching candidates')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Clear search candidates' }))
   expect(await screen.findByRole('link', { name: 'Candidate One' })).toBeInTheDocument()
 })
@@ -162,7 +167,7 @@ test('candidate profile and job query failures are shown', async () => {
   })
   renderCandidates('/candidates/candidate-1')
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load candidate profile.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('profile failed')
 })
 
 test('shortlist failure reports the backend error and duplicate actions remain blocked while pending', async () => {
@@ -187,5 +192,61 @@ test('shortlist failure reports the backend error and duplicate actions remain b
   expect(apiClient.post).toHaveBeenCalledTimes(1)
 
   rejectAdd(new Error('request failed'))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to add candidate to the shortlist.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('request failed')
+})
+
+test('candidate search includes email and filters candidates by skills', async () => {
+  const user = userEvent.setup()
+  vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+    if (url === '/candidates') return { data: candidateListResponse } as never
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  renderCandidates()
+  await screen.findByRole('link', { name: 'Candidate One' })
+  await user.type(screen.getByRole('textbox', { name: 'Search candidates' }), 'candidate@example.test')
+  expect(screen.getByRole('link', { name: 'Candidate One' })).toBeInTheDocument()
+  await user.clear(screen.getByRole('textbox', { name: 'Search candidates' }))
+  await user.click(screen.getByRole('combobox', { name: 'Filter candidates by skill' }))
+  await user.click(screen.getByRole('option', { name: 'Python' }))
+  expect(screen.getByRole('link', { name: 'Candidate One' })).toBeInTheDocument()
+})
+
+test('candidate creation displays duplicate validation from the backend', async () => {
+  const user = userEvent.setup()
+  vi.mocked(apiClient.get).mockResolvedValueOnce({ data: [] } as never)
+  vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('A candidate with this email already exists.'))
+  renderCandidates()
+  await user.click(await screen.findByRole('button', { name: 'Add candidate' }))
+  await user.type(screen.getByLabelText(/Full name/), 'Candidate One')
+  await user.type(screen.getByLabelText(/Email/), 'candidate@example.test')
+  await user.type(screen.getByLabelText(/Professional summary/), 'Experienced engineer.')
+  await user.click(screen.getByRole('button', { name: 'Save candidate' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('A candidate with this email already exists.')
+  expect(apiClient.post).toHaveBeenCalledWith('/candidates', expect.objectContaining({
+    workspace_id: 'workspace-1',
+    email: 'candidate@example.test',
+  }))
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+})
+
+test('candidate detail edits the existing workspace profile through the API', async () => {
+  vi.mocked(apiClient.get).mockImplementation(async (url: string) => {
+    if (url === '/candidates/candidate-1') return { data: candidateDetailResponse } as never
+    if (url === '/jobs') return { data: jobsResponse } as never
+    if (url === '/shortlists') return { data: [] } as never
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  vi.mocked(apiClient.put).mockResolvedValueOnce({ data: candidateDetailResponse } as never)
+  renderCandidates('/candidates/candidate-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit profile' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save candidate' }))
+
+  await waitFor(() => expect(apiClient.put).toHaveBeenCalledWith('/candidates/candidate-1', expect.objectContaining({
+    workspace_id: 'workspace-1',
+    full_name: 'Candidate One',
+    email: 'candidate@example.test',
+    sources: candidateDetailResponse.sources,
+  })))
 })

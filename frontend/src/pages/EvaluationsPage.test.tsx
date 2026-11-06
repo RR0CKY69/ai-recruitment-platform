@@ -1,3 +1,4 @@
+
 import { beforeEach, vi } from 'vitest'
 
 vi.mock('../services/apiClient', () => ({
@@ -6,6 +7,7 @@ vi.mock('../services/apiClient', () => ({
     put: vi.fn(),
   },
 }))
+
 vi.mock('../features/auth/AuthContext', () => ({
   useAuth: () => ({
     selectedWorkspace: { workspace_id: 'ws-1' },
@@ -58,10 +60,79 @@ const otherReviewerEvaluation = {
   }],
 }
 
+const unassignedEvaluation = {
+  ...ownEvaluation,
+  evaluation_id: 'evaluation-3',
+  candidate_id: 'candidate-2',
+  candidate_name: 'Bob',
+  notes: [{
+    note_id: 'note-3',
+    author_id: 'reviewer-1',
+    author_name: 'Reviewer One',
+    note: 'Unassigned candidate feedback',
+  }],
+}
+
+const jobData = [
+  {
+    id: 'job-1',
+    title: 'Job A',
+    status: 'OPEN',
+    description: 'Developer role',
+    required_skills: ['React'],
+    minimum_experience_years: 2,
+    employment_type: 'Full-time',
+    location: 'Remote',
+    candidate_count: 1,
+  },
+  {
+    id: 'job-2',
+    title: 'Job B',
+    status: 'OPEN',
+    description: 'Backend role',
+    required_skills: ['Python'],
+    minimum_experience_years: 2,
+    employment_type: 'Full-time',
+    location: 'Remote',
+    candidate_count: 1,
+  },
+]
+
+const assignedCandidates = [
+  {
+    candidate_id: 'candidate-1',
+    full_name: 'Alice',
+    email: 'alice@example.com',
+    current_title: 'Developer',
+    summary: 'React Developer',
+    experience_years: 3,
+    location: 'Remote',
+    skills: [],
+    sources: [],
+    stage: 'REVIEWING',
+  },
+]
+
+const jobBCandidates = [
+  {
+    candidate_id: 'candidate-2',
+    full_name: 'Bob',
+    email: 'bob@example.com',
+    current_title: 'Backend Developer',
+    summary: 'Python Developer',
+    experience_years: 3,
+    location: 'Remote',
+    skills: [],
+    sources: [],
+    stage: 'REVIEWING',
+  },
+]
+
 function renderPage() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+
   return render(
     <MemoryRouter>
       <QueryClientProvider client={queryClient}>
@@ -73,14 +144,36 @@ function renderPage() {
 
 function mockEvaluations(...responses: object[][]) {
   const get = apiClient.get as any
-  for (const response of responses) {
-    get.mockResolvedValueOnce({ data: response })
-  }
-  if (responses.length === 1) get.mockResolvedValue({ data: responses[0] })
+  let evaluationCall = 0
+
+  get.mockImplementation((url: string) => {
+    if (url === '/jobs') {
+      return Promise.resolve({ data: jobData })
+    }
+
+    if (url === '/jobs/job-1/candidates') {
+      return Promise.resolve({ data: assignedCandidates })
+    }
+
+    if (url === '/jobs/job-2/candidates') {
+      return Promise.resolve({ data: jobBCandidates })
+    }
+
+    if (url === '/evaluations') {
+      const response =
+        responses[Math.min(evaluationCall, responses.length - 1)]
+
+      evaluationCall += 1
+
+      return Promise.resolve({ data: response })
+    }
+
+    return Promise.reject(new Error(`Unexpected GET request: ${url}`))
+  })
 }
 
 function mockSaveError(status: number) {
-  (apiClient.put as any).mockRejectedValue(
+  ;(apiClient.put as any).mockRejectedValue(
     Object.assign(new Error('Request failed'), {
       isAxiosError: true,
       response: { status },
@@ -100,6 +193,7 @@ test('prefills the current reviewer label and existing feedback for editing', as
 
   const ownRow = (await screen.findByText('Existing feedback')).closest('tr')
   expect(ownRow).not.toBeNull()
+
   const ownEditButton = within(ownRow!).getByRole('button', { name: 'Edit' })
   expect(ownEditButton).toBeEnabled()
   await user.click(ownEditButton)
@@ -107,6 +201,7 @@ test('prefills the current reviewer label and existing feedback for editing', as
   const dialog = await screen.findByRole('dialog', { name: 'Edit evaluation' })
   expect(dialog).toBeVisible()
   expect(dialog).toHaveClass('fixed', 'inset-0')
+
   expect(screen.getByText('Another reviewer feedback').closest('tr')).toHaveTextContent('Read-only')
   expect(screen.getByRole('combobox', { name: 'Relevance label' })).toHaveTextContent('1 - Partial')
   expect(screen.getByRole('textbox', { name: 'Feedback' })).toHaveValue('Existing feedback')
@@ -119,12 +214,14 @@ test('updates the existing note using its note ID without creating a duplicate',
   renderPage()
 
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+
   const feedback = screen.getByRole('textbox', { name: 'Feedback' })
   await user.clear(feedback)
   await user.type(feedback, 'Revised feedback')
   await user.click(screen.getByRole('button', { name: 'Save' }))
 
   await waitFor(() => expect(apiClient.put).toHaveBeenCalledTimes(1))
+
   expect(apiClient.put).toHaveBeenCalledWith('/evaluations', {
     workspace_id: 'ws-1',
     job_id: 'job-1',
@@ -147,6 +244,51 @@ test('keeps another reviewer evaluation visible but read-only', async () => {
   expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
 })
 
+test('excludes evaluations for candidates not assigned to the selected job', async () => {
+  mockEvaluations([ownEvaluation, unassignedEvaluation])
+  renderPage()
+
+  expect(await screen.findByText('Alice')).toBeInTheDocument()
+  expect(screen.getByText('Existing feedback')).toBeInTheDocument()
+
+  expect(screen.queryByText('Bob')).not.toBeInTheDocument()
+  expect(screen.queryByText('Unassigned candidate feedback')).not.toBeInTheDocument()
+})
+
+test('shows only evaluations for the newly selected job', async () => {
+  const user = userEvent.setup()
+
+  mockEvaluations([
+    ownEvaluation,
+    {
+      ...ownEvaluation,
+      evaluation_id: 'evaluation-job-2',
+      job_id: 'job-2',
+      job_title: 'Job B',
+      candidate_id: 'candidate-2',
+      candidate_name: 'Bob',
+      notes: [{
+        note_id: 'note-job-2',
+        author_id: 'reviewer-1',
+        author_name: 'Reviewer One',
+        note: 'Job B feedback',
+      }],
+    },
+  ])
+
+  renderPage()
+
+  expect(await screen.findByText('Alice')).toBeInTheDocument()
+  expect(screen.queryByText('Bob')).not.toBeInTheDocument()
+
+  await user.click(screen.getByRole('combobox', { name: 'Select job' }))
+  await user.click(await screen.findByRole('option', { name: 'Job B' }))
+
+  expect(await screen.findByText('Bob')).toBeInTheDocument()
+  expect(screen.getByText('Job B feedback')).toBeInTheDocument()
+  expect(screen.queryByText('Alice')).not.toBeInTheDocument()
+})
+
 test('shows updated label and feedback after the invalidated query refetches', async () => {
   const updatedEvaluation = {
     ...ownEvaluation,
@@ -157,6 +299,7 @@ test('shows updated label and feedback after the invalidated query refetches', a
     }],
     updated_at: '2024-01-02T00:00:00Z',
   }
+
   mockEvaluations([ownEvaluation], [updatedEvaluation])
   ;(apiClient.put as any).mockResolvedValue({ data: updatedEvaluation })
   renderPage()
@@ -166,9 +309,10 @@ test('shows updated label and feedback after the invalidated query refetches', a
 
   const updatedFeedback = await screen.findByText('Latest feedback')
   const row = updatedFeedback.closest('tr')
+
   expect(row).not.toBeNull()
   expect(within(row!).getByText('2')).toBeInTheDocument()
-  expect(apiClient.get).toHaveBeenCalledTimes(2)
+  expect(apiClient.get).toHaveBeenCalledTimes(4)
 })
 
 test.each([

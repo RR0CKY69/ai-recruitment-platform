@@ -14,6 +14,7 @@ export interface Job {
 export interface Candidate {
   candidate_id: string
   full_name: string
+  email?: string
   current_title?: string
   location?: string
   summary: string
@@ -89,6 +90,7 @@ interface ApiJob {
 interface ApiCandidate {
   id: string
   full_name: string
+  email?: string | null
   summary: string
   current_title: string | null
   location: string | null
@@ -120,6 +122,7 @@ export async function fetchCandidates(workspaceId: string): Promise<Candidate[]>
   return data.map(candidate => ({
     candidate_id: candidate.id,
     full_name: candidate.full_name,
+    email: candidate.email ?? undefined,
     current_title: candidate.current_title ?? undefined,
     location: candidate.location ?? undefined,
     summary: candidate.summary,

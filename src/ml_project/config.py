@@ -27,6 +27,8 @@ DEFAULT_CORS_ALLOWED_ORIGINS = (
     "http://127.0.0.1:5173",
 )
 
+DEFAULT_MAX_RESUME_SIZE_BYTES = 10 * 1024 * 1024
+
 DEFAULT_REFRESH_TOKEN_DAYS = 7
 MAX_REFRESH_TOKEN_DAYS = 30
 DEFAULT_REFRESH_COOKIE_NAME = "refresh_token"
@@ -246,6 +248,19 @@ def get_cors_origins() -> tuple[str, ...]:
             )
 
     return origins
+
+
+def get_max_resume_size_bytes() -> int:
+    """Return the maximum allowed resume upload size in bytes."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    raw = os.getenv("MAX_RESUME_SIZE_BYTES", str(DEFAULT_MAX_RESUME_SIZE_BYTES)).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError("MAX_RESUME_SIZE_BYTES must be a whole number.") from error
+    if value <= 0:
+        raise RuntimeError("MAX_RESUME_SIZE_BYTES must be positive.")
+    return value
 
 
 @lru_cache(maxsize=1)

@@ -99,6 +99,28 @@ test('copies the current edited query and makes no external sourcing claim', asy
   expect(screen.getByText(/does not search LinkedIn/)).toBeInTheDocument()
 })
 
+test('regenerates and resets the query when the source inputs change', async () => {
+  const user = userEvent.setup()
+  mocks.fetchJobs.mockResolvedValue(workspaceJobs)
+  renderPage()
+
+  await user.click(await screen.findByRole('combobox', { name: 'Workspace job' }))
+  await user.click(await screen.findByRole('option', { name: 'Python Developer' }))
+
+  const query = await screen.findByRole('textbox', { name: 'Editable Boolean query' })
+  fireEvent.change(query, { target: { value: 'custom Boolean query' } })
+  fireEvent.change(screen.getByLabelText('Include keywords'), { target: { value: 'PostgreSQL Database' } })
+  expect(query).toHaveValue('("Python Developer" AND (Django OR FastAPI OR "PostgreSQL Database"))')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Regenerate Query' }))
+  expect(query).toHaveValue('("Python Developer" AND (Django OR FastAPI OR "PostgreSQL Database"))')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
+  expect(screen.getByLabelText('Include keywords')).toHaveValue('')
+  expect(screen.getByLabelText('Exclude keywords')).toHaveValue('')
+  expect(query).toHaveValue('("Python Developer" AND (Django OR FastAPI))')
+})
+
 test('reports job loading errors', async () => {
   mocks.fetchJobs.mockRejectedValue(new Error('workspace API failed'))
   renderPage()

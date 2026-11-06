@@ -152,8 +152,8 @@ def test_core_relationships_and_json_records_persist():
 
 
 def test_refresh_session_creation_user_relationship_token_hash_expiration_and_revocation():
-    from datetime import datetime, timedelta, timezone
     import uuid
+    from datetime import datetime, timedelta, timezone
 
     engine = _sqlite_engine()
     initialize_database(engine)

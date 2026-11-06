@@ -106,29 +106,10 @@ def add_to_shortlist(
         )
     )
     if association is None:
-        association = JobCandidate(
-            workspace_id=payload.workspace_id,
-            job_id=job.id,
-            candidate_id=candidate.id,
-            created_by_id=user.id,
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Candidate is not assigned to this job.",
         )
-        session.add(association)
-        try:
-            session.flush()
-        except IntegrityError:
-            session.rollback()
-            association = session.scalar(
-                select(JobCandidate).where(
-                    JobCandidate.workspace_id == payload.workspace_id,
-                    JobCandidate.job_id == job.id,
-                    JobCandidate.candidate_id == candidate.id,
-                )
-            )
-            if association is None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="The shortlist entry conflicts with an existing record.",
-                ) from None
 
     shortlist = session.scalar(
         select(Shortlist).where(Shortlist.job_candidate_id == association.id)

@@ -18,7 +18,6 @@ A recruitment workflow prototype with a React + TypeScript frontend, a FastAPI b
 
 ### Incomplete
 
-- There are no general job or candidate create/edit API endpoints.
 - The application has no workspace or membership administration API. A user must already belong to a workspace to use workspace-scoped features. The admin bootstrap command creates a user, not a workspace.
 - The Boolean Search interface builds a query in the frontend; it does not persist searches or connect to sourcing providers.
 - There are no active source connectors or background sourcing jobs.
@@ -44,13 +43,15 @@ The API includes:
 |---|---|
 | Authentication | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
 | Workspaces | `GET /workspaces` lists workspaces available to the signed-in user |
-| Jobs and candidates | `GET /jobs`, `GET /candidates`, and `GET /candidates/{candidate_id}` |
+| Jobs and candidates | `GET /jobs`, `GET /candidates`, `GET /candidates/{candidate_id}`, `POST /jobs`, `PUT /jobs/{job_id}`, `POST /candidates`, `PUT /candidates/{candidate_id}`, `POST /candidates/resume` |
 | Matching | `POST /matching/run`, `GET /matching`, and `GET /matching/score-distribution` |
 | Evaluations | `GET /evaluations` and `PUT /evaluations` for reviewer labels and notes |
 | Shortlists | `GET /shortlists`, `POST /shortlists`, and `DELETE /shortlists/{shortlist_id}` |
 | Health | `GET /health` |
 
-Workspace-scoped endpoints require an authenticated active user and workspace membership. The backend checks membership for the requested workspace; workspace access is not inferred from a client-supplied workspace ID alone. The API does not currently expose general workspace/member management or job/candidate CRUD.
+Workspace-scoped endpoints require an authenticated active user and workspace membership. The backend checks membership for the requested workspace; workspace access is not inferred from a client-supplied workspace ID alone. The API does not currently expose general workspace/member management.
+
+The current `/matching/run` route processes only candidates explicitly assigned to the selected job via existing `job_candidates` associations. It never creates or modifies job-candidate associations. The Stage 2 frontend enables matching once a job is selected. Unassigned candidates must not block matching, and candidates assigned to other jobs must be excluded. See the [frontend API contract proposals](./frontend/API_CONTRACTS.md) for the required assignment, CRUD, resume, and matching interfaces.
 
 Authentication uses short-lived HS256 access JWTs (15 minutes by default) and refresh sessions stored as hashes in the database. Refresh tokens are sent in an HttpOnly cookie and rotated when refreshed; logout revokes the refresh session. Login rate limiting is configurable but currently process-local.
 

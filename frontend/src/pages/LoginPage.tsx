@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Eye, EyeOff, Sparkles } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthContext'
+import Brand from '../components/shared/Brand'
 
 export default function LoginPage() {
   const { signIn, loading, error } = useAuth()
@@ -36,15 +37,7 @@ export default function LoginPage() {
           </div>
 
           <div className="relative z-10">
-            <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-slate-950 shadow-lg shadow-indigo-500/30">
-                <Sparkles size={20} />
-              </div>
-              <div>
-                <div className="text-xs font-semibold tracking-[0.28em] text-indigo-300 uppercase">Apex</div>
-                <div className="text-lg font-semibold text-slate-50">Recruit</div>
-              </div>
-            </div>
+            <Brand size="large" className="relative z-10 mb-8" />
 
             <div className="space-y-4">
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-300">Talent intelligence</p>
@@ -79,10 +72,13 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-300">Email</label>
+              <label htmlFor="login-email" className="block text-sm font-medium text-slate-300">Email</label>
               <input
+                id="login-email"
                 className="input-shell"
                 type="email"
+                autoComplete="email"
+                required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="recruiter@apexrecruit.com"
@@ -90,11 +86,14 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-300">Password</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-slate-300">Password</label>
               <div className="relative">
                 <input
+                  id="login-password"
                   className="input-shell pr-11"
                   type={show ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="Enter your password"
@@ -120,6 +119,9 @@ export default function LoginPage() {
               {loading ? 'Signing in...' : 'Sign in'}
               <ArrowRight size={18} />
             </button>
+            <p className="text-center text-sm text-slate-400">
+              New to Apex Recruit? <Link to="/register" className="font-medium text-indigo-200 hover:text-white hover:underline">Create an account</Link>
+            </p>
           </form>
         </div>
       </div>

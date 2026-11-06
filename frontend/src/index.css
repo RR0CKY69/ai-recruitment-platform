@@ -27,6 +27,7 @@ html, body, #root {
   min-height: 100%;
   margin: 0;
   background: var(--background);
+  overflow-x: clip;
 }
 
 body {
@@ -38,7 +39,37 @@ body {
     var(--background);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #475569;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #6366f1;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 button, input, select, textarea { font: inherit; }
 
 .app-shell {
@@ -122,6 +153,13 @@ button, input, select, textarea { font: inherit; }
   overflow: hidden;
 }
 
+.table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
 .table-shell th,
 .table-shell td {
   border-bottom: 1px solid var(--border);
@@ -154,6 +192,19 @@ button, input, select, textarea { font: inherit; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.form-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: #cbd5e1;
+  font-size: 0.875rem;
+}
+
+.form-field > span:first-child {
+  font-weight: 500;
+}
+
 .search-field-input {
   height: 44px;
   padding: 0.5rem 2.5rem;
@@ -175,6 +226,14 @@ button, input, select, textarea { font: inherit; }
   text-align: left;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.select-trigger > span:first-child {
+  min-width: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .select-trigger:hover:not(:disabled) {
@@ -290,6 +349,20 @@ button, input, select, textarea { font: inherit; }
   cursor: pointer;
 }
 
+.button-primary:focus-visible,
+.button-secondary:focus-visible,
+.button-ghost:focus-visible {
+  outline: 2px solid rgba(129, 140, 248, 0.95);
+  outline-offset: 2px;
+}
+
+.button-primary:disabled,
+.button-secondary:disabled,
+.button-ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .button-primary {
   background: linear-gradient(135deg, var(--primary), var(--primary-hover));
   color: white;
@@ -324,6 +397,8 @@ button, input, select, textarea { font: inherit; }
 .status-pill.success { background: rgba(34, 197, 94, 0.12); color: #94f0b5; }
 .status-pill.warning { background: rgba(245, 158, 11, 0.12); color: #f7d98d; }
 .status-pill.neutral { background: rgba(148, 163, 184, 0.12); color: var(--muted); }
+.status-pill.error { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+.status-pill.info { background: rgba(56, 189, 248, 0.12); color: #bae6fd; }
 
 @media (max-width: 768px) {
   .page-shell { padding: 1rem; }
