@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,15 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 login_rate_limiter = InMemoryLoginRateLimiter()
 
 
+def _normalize_samesite(value: str) -> Literal["lax", "strict", "none"]:
+    normalized = value.strip().lower()
+
+    if normalized not in {"lax", "strict", "none"}:
+        raise ValueError(f"Invalid SameSite cookie setting: {value}")
+
+    return cast(Literal["lax", "strict", "none"], normalized)
+
+
 def _set_refresh_cookie(response: Response, token: str) -> None:
     settings = get_refresh_token_settings()
     max_age = int(timedelta(days=settings.token_days).total_seconds())
@@ -47,7 +56,7 @@ def _set_refresh_cookie(response: Response, token: str) -> None:
         value=token,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite.lower(),
+        samesite=_normalize_samesite(settings.cookie_samesite),
         max_age=max_age,
         expires=max_age,
         path=settings.cookie_path,
@@ -62,7 +71,7 @@ def _clear_refresh_cookie(response: Response) -> None:
         value="",
         httponly=True,
         secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite.lower(),
+        samesite=_normalize_samesite(settings.cookie_samesite),
         max_age=0,
         expires=0,
         path=settings.cookie_path,
@@ -216,7 +225,7 @@ def refresh(request: Request, response: Response, session: Annotated[Session, De
         if refresh_session.revoked_at is not None:
             # Reuse detected - revoke entire family
             session.execute(
-                RefreshSession.__table__.update()
+                update(RefreshSession)
                 .where(RefreshSession.family_id == refresh_session.family_id)
                 .where(RefreshSession.revoked_at.is_(None))
                 .values(revoked_at=now)
