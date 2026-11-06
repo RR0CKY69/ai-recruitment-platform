@@ -108,6 +108,10 @@ export default function PipelinePage() {
           context?.jobId ?? variables.jobId,
         ],
       })
+
+      qc.invalidateQueries({
+        queryKey: ['shortlists', workspaceId],
+      })
     },
   })
 

@@ -51,6 +51,7 @@ from ml_project.api.schemas import (
     UpdateJobCandidateStageRequest,
 )
 from ml_project.config import get_max_resume_size_bytes
+from ml_project.audit import record_audit_event
 from ml_project.models import (
     Candidate,
     CandidateSkill,
@@ -464,8 +465,9 @@ def update_job_candidate_stage(
     session: Annotated[Session, Depends(get_api_session)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> JobCandidateAssignmentResponse:
-    """Update the recruitment stage of an existing workspace job-candidate association."""
+    """Update a job-candidate stage and synchronize its shortlist entry."""
     require_workspace_membership(session, user, workspace_id)
+
     job = session.scalar(
         select(Job).where(Job.id == job_id, Job.workspace_id == workspace_id)
     )
@@ -474,14 +476,19 @@ def update_job_candidate_stage(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found in workspace.",
         )
+
     candidate = session.scalar(
-        select(Candidate).where(Candidate.id == candidate_id, Candidate.workspace_id == workspace_id)
+        select(Candidate).where(
+            Candidate.id == candidate_id,
+            Candidate.workspace_id == workspace_id,
+        )
     )
     if candidate is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Candidate not found in workspace.",
         )
+
     association = session.scalar(
         select(JobCandidate).where(
             JobCandidate.workspace_id == workspace_id,
@@ -494,13 +501,90 @@ def update_job_candidate_stage(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assignment not found in workspace.",
         )
+
+    shortlist = session.scalar(
+        select(Shortlist).where(
+            Shortlist.job_candidate_id == association.id
+        )
+    )
+
+    if payload.stage == "SHORTLISTED":
+        if shortlist is None:
+            shortlist = Shortlist(
+                job_candidate_id=association.id,
+                added_by_id=user.id,
+                status="ACTIVE",
+            )
+            session.add(shortlist)
+            session.flush()
+            record_audit_event(
+                session,
+                workspace_id=workspace_id,
+                actor_id=user.id,
+                action="shortlist.added",
+                entity_type="shortlist",
+                entity_id=shortlist.id,
+                details={"job_id": str(job_id), "candidate_id": str(candidate_id)},
+            )
+        elif shortlist.status in {"REMOVED", "HIRED"}:
+            shortlist.status = "ACTIVE"
+            shortlist.added_by_id = user.id
+            record_audit_event(
+                session,
+                workspace_id=workspace_id,
+                actor_id=user.id,
+                action="shortlist.added",
+                entity_type="shortlist",
+                entity_id=shortlist.id,
+                details={"job_id": str(job_id), "candidate_id": str(candidate_id)},
+            )
+
+    elif payload.stage == "HIRED":
+        shortlist_created = shortlist is None
+
+        if shortlist_created:
+            shortlist = Shortlist(
+                job_candidate_id=association.id,
+                added_by_id=user.id,
+                status="HIRED",
+            )
+            session.add(shortlist)
+            session.flush()
+
+        if shortlist_created or shortlist.status != "HIRED":
+            shortlist.status = "HIRED"
+            record_audit_event(
+                session,
+                workspace_id=workspace_id,
+                actor_id=user.id,
+                action="shortlist.hired",
+                entity_type="shortlist",
+                entity_id=shortlist.id,
+                details={"job_id": str(job_id), "candidate_id": str(candidate_id)},
+            )
+
+    elif shortlist is not None and shortlist.status in {"ACTIVE", "HIRED"}:
+        shortlist.status = "REMOVED"
+        record_audit_event(
+            session,
+            workspace_id=workspace_id,
+            actor_id=user.id,
+            action="shortlist.removed",
+            entity_type="shortlist",
+            entity_id=shortlist.id,
+            details={"job_id": str(job_id), "candidate_id": str(candidate_id)},
+        )
+
     association.stage = payload.stage
+
     try:
         session.commit()
     except SQLAlchemyError:
         session.rollback()
         raise _database_error() from None
+
     return _job_candidate_association_response(association)
+
 
 
 def _job_response(job: Job, session: Session) -> JobResponse:

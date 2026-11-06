@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from ml_project.api.dependencies import get_api_session
 from ml_project.api.main import app
 from ml_project.models import (
+    AuditLog,
     Base,
     Candidate,
     CandidateSkill,
@@ -1141,7 +1142,7 @@ def test_stage_update_preserves_matching_and_evaluation_records(workspace_client
         assert session.get(EvaluationLabel, label_id) is not None
 
 
-def test_stage_update_to_shortlisted_does_not_create_shortlist_record(
+def test_stage_update_to_shortlisted_creates_active_shortlist_record(
     workspace_client,
 ):
     client, factory = workspace_client
@@ -1158,14 +1159,6 @@ def test_stage_update_to_shortlisted_does_not_create_shortlist_record(
         session.flush()
         association_id = association.id
 
-    shortlist_count_before = None
-    with factory.begin() as session:
-        shortlist_count_before = session.scalar(
-            select(func.count(Shortlist.id)).where(
-                Shortlist.job_candidate_id == association_id
-            )
-        )
-
     _patch_stage(
         client,
         records["job_a"],
@@ -1176,13 +1169,171 @@ def test_stage_update_to_shortlisted_does_not_create_shortlist_record(
     )
 
     with factory.begin() as session:
-        assert session.get(JobCandidate, association_id).stage == "SHORTLISTED"
-        shortlist_count_after = session.scalar(
-            select(func.count(Shortlist.id)).where(
+        updated_association = session.get(JobCandidate, association_id)
+        assert updated_association.stage == "SHORTLISTED"
+
+        shortlist = session.scalar(
+            select(Shortlist).where(
                 Shortlist.job_candidate_id == association_id
             )
         )
-        assert shortlist_count_after == shortlist_count_before == 0
+
+        assert shortlist is not None
+        assert shortlist.status == "ACTIVE"
+        assert shortlist.added_by_id == records["user_id"]
+
+def _create_hired_stage_assignment(factory, records):
+    with factory.begin() as session:
+        association = JobCandidate(
+            workspace_id=records["workspace_a"],
+            job_id=records["job_a"],
+            candidate_id=records["candidate_a"],
+            stage="HIRED",
+        )
+        session.add(association)
+        session.flush()
+
+        shortlist = Shortlist(
+            job_candidate_id=association.id,
+            added_by_id=records["user_id"],
+            status="HIRED",
+        )
+        session.add(shortlist)
+        session.flush()
+
+        return association.id
+
+
+def test_stage_update_directly_to_hired_creates_hired_shortlist_and_audit(
+    workspace_client,
+):
+    client, factory = workspace_client
+    records = _seed_records(factory)
+    token = _token(client, records["email"])
+
+    with factory.begin() as session:
+        association = JobCandidate(
+            workspace_id=records["workspace_a"],
+            job_id=records["job_a"],
+            candidate_id=records["candidate_a"],
+        )
+        session.add(association)
+        session.flush()
+        association_id = association.id
+
+    response = _patch_stage(
+        client, records["job_a"], records["candidate_a"],
+        records["workspace_a"], "HIRED", token,
+    )
+    assert response.status_code == 200
+
+    with factory.begin() as session:
+        association = session.get(JobCandidate, association_id)
+        shortlist = session.scalar(
+            select(Shortlist).where(
+                Shortlist.job_candidate_id == association_id
+            )
+        )
+        events = session.scalars(
+            select(AuditLog).where(AuditLog.action == "shortlist.hired")
+        ).all()
+
+        assert association.stage == "HIRED"
+        assert shortlist is not None
+        assert shortlist.status == "HIRED"
+        assert shortlist.added_by_id == records["user_id"]
+        assert len(events) == 1
+
+
+def test_stage_update_hired_to_rejected_removes_shortlist(
+    workspace_client,
+):
+    client, factory = workspace_client
+    records = _seed_records(factory)
+    token = _token(client, records["email"])
+    association_id = _create_hired_stage_assignment(factory, records)
+
+    response = _patch_stage(
+        client, records["job_a"], records["candidate_a"],
+        records["workspace_a"], "REJECTED", token,
+    )
+    assert response.status_code == 200
+
+    with factory.begin() as session:
+        association = session.get(JobCandidate, association_id)
+        shortlist = session.scalar(
+            select(Shortlist).where(
+                Shortlist.job_candidate_id == association_id
+            )
+        )
+        events = session.scalars(
+            select(AuditLog).where(AuditLog.action == "shortlist.removed")
+        ).all()
+
+        assert association.stage == "REJECTED"
+        assert shortlist.status == "REMOVED"
+        assert len(events) == 1
+
+
+def test_stage_update_hired_to_shortlisted_reactivates_shortlist(
+    workspace_client,
+):
+    client, factory = workspace_client
+    records = _seed_records(factory)
+    token = _token(client, records["email"])
+    association_id = _create_hired_stage_assignment(factory, records)
+
+    response = _patch_stage(
+        client, records["job_a"], records["candidate_a"],
+        records["workspace_a"], "SHORTLISTED", token,
+    )
+    assert response.status_code == 200
+
+    with factory.begin() as session:
+        association = session.get(JobCandidate, association_id)
+        shortlist = session.scalar(
+            select(Shortlist).where(
+                Shortlist.job_candidate_id == association_id
+            )
+        )
+        events = session.scalars(
+            select(AuditLog).where(AuditLog.action == "shortlist.added")
+        ).all()
+
+        assert association.stage == "SHORTLISTED"
+        assert shortlist.status == "ACTIVE"
+        assert shortlist.added_by_id == records["user_id"]
+        assert len(events) == 1
+
+
+def test_repeating_hired_stage_does_not_duplicate_hiring_audit(
+    workspace_client,
+):
+    client, factory = workspace_client
+    records = _seed_records(factory)
+    token = _token(client, records["email"])
+    association_id = _create_hired_stage_assignment(factory, records)
+
+    response = _patch_stage(
+        client, records["job_a"], records["candidate_a"],
+        records["workspace_a"], "HIRED", token,
+    )
+    assert response.status_code == 200
+
+    with factory.begin() as session:
+        association = session.get(JobCandidate, association_id)
+        shortlist = session.scalar(
+            select(Shortlist).where(
+                Shortlist.job_candidate_id == association_id
+            )
+        )
+        events = session.scalars(
+            select(AuditLog).where(AuditLog.action == "shortlist.hired")
+        ).all()
+
+        assert association.stage == "HIRED"
+        assert shortlist.status == "HIRED"
+        assert len(events) == 0
 
 
 def _post_job(client, workspace_id, payload, token):
