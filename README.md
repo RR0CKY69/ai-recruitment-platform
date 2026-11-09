@@ -765,7 +765,7 @@ It trains a RandomForest classifier inside a scikit-learn preprocessing pipeline
 
 ## Deployment
 
-The repository contains Vercel-related configuration but does not establish that a production deployment has been completed or verified:
+The application is deployed on Vercel, with production deployment connected to the GitHub `main` branch.
 
 - The Python API entrypoint is `api/index.py`; `pyproject.toml` sets the Vercel entrypoint to `api.index:app`.
 - `frontend/vercel.json` rewrites frontend paths to `/index.html` for client-side routing.
@@ -773,6 +773,19 @@ The repository contains Vercel-related configuration but does not establish that
 A deployment can host the frontend and API as separate Vercel projects. Configure the frontend's `VITE_API_BASE_URL` to the deployed API origin. Configure the backend with a reachable PostgreSQL `DATABASE_URL`, `ENV=production`, a strong `JWT_SECRET_KEY`, a strong `REFRESH_TOKEN_HASH_SECRET`, `REFRESH_COOKIE_SECURE=true`, and explicit `CORS_ALLOWED_ORIGINS` containing the frontend origin. Ensure refresh-cookie domain and SameSite settings are compatible with the chosen origins and browser policy.
 
 Provision PostgreSQL separately and apply Alembic migrations with `alembic upgrade head` as part of a controlled release process. Production API docs are disabled by the application. Do not place credentials in the repository or frontend build variables, and do not treat successful local development as deployment verification.
+
+### Production Deployment
+
+- **Hosting:** Vercel.
+- **Source control:** GitHub.
+- **Production branch:** `main`.
+- **Deployment workflow:** Pushing changes to `main` automatically triggers a Vercel deployment.
+- **Database:** Neon PostgreSQL.
+- **Environment variables:** Production configuration is managed through Vercel project settings.
+
+After each deployment, verify the deployment status in Vercel and test the production application.
+
+Database migrations are managed separately through Alembic and are not automatically executed by the deployment workflow.
 
 ## Current limitations
 
