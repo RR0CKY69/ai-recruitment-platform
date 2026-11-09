@@ -68,3 +68,17 @@ def require_workspace_membership(
             detail="Workspace membership is required for this operation.",
         )
     return membership
+
+def require_workspace_admin(
+    session: Session, user: User, workspace_id: UUID
+) -> WorkspaceMember:
+    """Authorize workspace management only for ADMIN members."""
+    membership = require_workspace_membership(session, user, workspace_id)
+
+    if membership.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workspace administrator permissions are required.",
+        )
+
+    return membership

@@ -86,6 +86,67 @@ class WorkspaceMembershipResponse(BaseModel):
     role: Literal["ADMIN", "RECRUITER"]
 
 
+
+class WorkspaceDetailResponse(BaseModel):
+    """Workspace details and the authenticated user's role."""
+
+    workspace_id: UUID
+    name: str
+    slug: str
+    role: Literal["ADMIN", "RECRUITER"]
+
+
+class WorkspaceMemberResponse(BaseModel):
+    """Public details for one workspace member."""
+
+    membership_id: UUID
+    user_id: UUID
+    full_name: str
+    email: str
+    role: Literal["ADMIN", "RECRUITER"]
+    created_at: datetime
+
+
+class AddWorkspaceMemberRequest(BaseModel):
+    """Add an existing registered user to a workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["ADMIN", "RECRUITER"] = "RECRUITER"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized):
+            raise ValueError("Enter a valid email address.")
+        return normalized
+
+
+class UpdateWorkspaceMemberRoleRequest(BaseModel):
+    """Change an existing member's workspace role."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["ADMIN", "RECRUITER"]
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    """Update workspace settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def non_blank_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Workspace name cannot be blank.")
+        return stripped
+
 class JobResponse(BaseModel):
     """Workspace-visible job fields, excluding internal creator and audit data."""
 

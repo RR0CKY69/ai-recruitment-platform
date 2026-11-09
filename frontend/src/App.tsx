@@ -14,8 +14,8 @@ import ShortlistsPage from './pages/ShortlistsPage'
 import EvaluationsPage from './pages/EvaluationsPage'
 import BooleanSearchPage from './pages/BooleanSearchPage'
 import SettingsPage from './pages/SettingsPage'
-import { Placeholder } from './components/shared/Placeholder'
 import PipelinePage from './pages/PipelinePage'
+import WorkspaceTeamPage from './pages/WorkspaceTeamPage'
 
 export default function App() {
   return (
@@ -38,7 +38,7 @@ export default function App() {
             <Route path="/evaluations" element={<EvaluationsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/pipeline" element={<PipelinePage />} />
-            <Route path="/workspace-team" element={<Placeholder title="Workspace & Team" />} />
+            <Route path="/workspace-team" element={<WorkspaceTeamPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
