@@ -65,12 +65,25 @@ Workspace-scoped API operations require an authenticated user and verified membe
 - Record human relevance labels and reviewer-authored notes per job-candidate pair.
 - Write audit events for matching runs, evaluation writes, shortlist operations, and shortlist synchronization.
 
+### Workspace and team management
+
+- View available workspaces and workspace details.
+- View workspace members and their assigned roles.
+- Add existing registered users to a workspace using their email address.
+- Update member roles between `ADMIN` and `RECRUITER`.
+- Remove members from a workspace.
+- Rename workspaces with automatic slug regeneration.
+- Restrict administrative actions to users with the `ADMIN` role.
+- Provide read-only workspace administration access to `RECRUITER` members.
+- Prevent removal or demotion of the last workspace administrator.
+- Record workspace administration changes through audit events.
+
 ### Platform and security
 
 - Register an account and initial workspace, or sign in to an existing account.
 - Use short-lived bearer access tokens and rotating refresh sessions in an HttpOnly cookie.
 - Enforce workspace membership for workspace-scoped API operations.
-- Support `ADMIN` and `RECRUITER` workspace membership roles. Both roles currently have the same API operation access; fine-grained role permissions are not implemented.
+- Support ADMIN and RECRUITER workspace membership roles with distinct permissions. ADMIN members can manage workspace settings and membership, while RECRUITER members have read-only access to workspace administration.
 - Hash passwords with Argon2id and store refresh-token hashes rather than plaintext refresh tokens.
 
 ### Reporting and utilities
@@ -96,6 +109,10 @@ Workspace-scoped API operations require an authenticated user and verified membe
 10. **Update the pipeline.** A recruiter changes the assignment's stage. The API synchronizes shortlist status as described in [Recruitment pipeline and shortlists](#recruitment-pipeline-and-shortlists).
 11. **Make a hiring decision.** The application does not make this decision automatically.
 
+### Workspace administration
+
+Workspace members can view workspace details and the member list. Users with the `ADMIN` role can rename the workspace, add existing registered users, update member roles, and remove members. Users with the `RECRUITER` role have read-only access to workspace and membership information. The application prevents the last workspace administrator from being removed or demoted.
+
 Matching computation and score persistence are automated after a recruiter initiates a run. Candidate assignment, evaluation, shortlisting, stage changes, and hiring decisions require human action.
 
 ## Screenshots and interface
@@ -113,7 +130,7 @@ The frontend routes include:
 - Settings
 - Login, registration, and workspace selection
 
-The `Workspace & Team` navigation route currently displays a placeholder; workspace and membership administration screens are not implemented. No maintained screenshot assets are included in the repository. Screenshots can be added when reviewed product captures are available.
+The `Workspace & Team` section provides workspace and membership administration. Users can view workspace details and members, while workspace administrators can add existing users, update member roles, remove members, and rename the workspace. Role-based access control restricts administrative actions to users with the `ADMIN` role, while `RECRUITER` members have read-only access. The application also includes safeguards against removing or demoting the last workspace administrator. No maintained screenshot assets are currently included in the repository.
 
 ## Technology stack
 
@@ -295,7 +312,7 @@ Deleting an assignment does not delete the reusable candidate profile. The API b
 ### Authorization and request protections
 
 - Protected API requests require a valid bearer token and an active user.
-- Workspace endpoints verify that the authenticated user is a member of the requested workspace. Both `ADMIN` and `RECRUITER` are currently accepted; no separate operation-level permissions are enforced.
+- Workspace endpoints verify authenticated workspace membership and enforce role-based permissions. Administrative operations require the ADMIN role, while RECRUITER members have read-only access to workspace and membership information.
 - CORS origins are explicit; wildcard origins are rejected. In production, `CORS_ALLOWED_ORIGINS` must be set.
 - Login uses an in-memory, per-process fixed-window limiter. Defaults are five failed attempts per client key per 60 seconds. It is not a shared distributed rate limiter.
 - When a request supplies an `Origin` header, login, refresh, and logout accept only configured origins. Requests without an Origin header are allowed.
@@ -368,6 +385,12 @@ All routes below are registered by the FastAPI application. Unless marked public
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
 | `GET` | `/workspaces` | Bearer token | List workspaces the current user belongs to, including the membership role. |
+| `GET` | `/workspaces/{workspace_id}` | Bearer token and workspace membership | Retrieve workspace details, including its name and slug. |
+| `GET` | `/workspaces/{workspace_id}/members` | Bearer token and workspace membership | List members of the specified workspace, including their roles. |
+| `POST` | `/workspaces/{workspace_id}/members` | Bearer token and ADMIN role | Add an existing registered user to the workspace using their email address. |
+| `PATCH` | `/workspaces/{workspace_id}` | Bearer token and ADMIN role | Rename the workspace and regenerate its slug. |
+| `PATCH` | `/workspaces/{workspace_id}/members/{user_id}` | Bearer token and ADMIN role | Update a workspace member's role between `ADMIN` and `RECRUITER`. |
+| `DELETE` | `/workspaces/{workspace_id}/members/{user_id}` | Bearer token and ADMIN role | Remove a member from the workspace. The last workspace administrator cannot be removed. |
 
 ### Jobs and candidates
 
@@ -427,7 +450,7 @@ For local development, interactive API documentation is available at `http://127
 ```text
 .
 ├── api/
-│   └── index.py                  # Vercel API entrypoint
+│   └── index.py
 ├── data/
 │   ├── candidates.csv
 │   ├── evaluation.csv
@@ -436,10 +459,20 @@ For local development, interactive API documentation is available at `http://127
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
+│   │   │   └── shared/
+│   │   │       ├── ConfirmationDialog.tsx
+│   │   │       └── StyledSelect.tsx
 │   │   ├── features/
+│   │   │   ├── auth/
+│   │   │   └── workspaces/
+│   │   │       ├── api.ts
+│   │   │       └── api.test.ts
 │   │   ├── pages/
+│   │   │   ├── WorkspaceTeamPage.tsx
+│   │   │   └── WorkspaceTeamPage.test.tsx
 │   │   ├── services/
-│   │   └── App.tsx
+│   │   ├── App.tsx
+│   │   └── ...
 │   ├── vercel.json
 │   ├── vite.config.ts
 │   └── package.json
@@ -452,7 +485,12 @@ For local development, interactive API documentation is available at `http://127
 ├── src/
 │   └── ml_project/
 │       ├── api/
-│       │   └── routers/
+│       │   ├── routers/
+│       │   │   ├── auth.py
+│       │   │   └── workspaces.py
+│       │   ├── dependencies.py
+│       │   ├── schemas.py
+│       │   └── workspace_slugs.py
 │       ├── audit.py
 │       ├── bootstrap_admin.py
 │       ├── config.py
@@ -467,7 +505,12 @@ For local development, interactive API documentation is available at `http://127
 │       ├── models.py
 │       └── security.py
 ├── tests/
-│   └── postgres/
+│   ├── postgres/
+│   │   ├── conftest.py
+│   │   ├── test_workspaces.py
+│   │   └── test_workspace_concurrency.py
+│   ├── __init__.py
+│   └── test_workspaces_api.py
 ├── .env.example
 ├── alembic.ini
 ├── pyproject.toml
@@ -736,8 +779,8 @@ Provision PostgreSQL separately and apply Alembic migrations with `alembic upgra
 - No external sourcing connectors or active background sourcing jobs are implemented. `SourcingTask` is a modeled table, not a running queue or connector.
 - Boolean Search generates query text in the frontend; it does not persist searches or contact external providers. `SearchQuery` is a modeled table without active query endpoints.
 - Semantic matching is inactive; semantic similarity is returned as `null`.
-- Workspace listing exists, but workspace/member invitation and administration APIs are not implemented. Registration creates the registering user’s initial workspace.
-- `ADMIN` and `RECRUITER` memberships are both accepted for current workspace operations; distinct role permissions are not implemented.
+- Workspace and membership administration are implemented, including workspace listing, member management, role updates, member removal, and workspace renaming. However, an email-based invitation workflow for users who are not already registered is not implemented. Registration creates the registering user's initial workspace.
+- `ADMIN` and `RECRUITER` memberships have distinct permissions. Workspace administration actions are restricted to `ADMIN` members, while `RECRUITER` members have read-only access to workspace and membership information.
 - The login rate limiter is held in process memory and is not shared across multiple backend workers.
 - The experimental combined score is not validated, calibrated, or used to rank candidates.
 - The standalone RandomForest example is unrelated to production candidate matching.
@@ -748,11 +791,11 @@ Provision PostgreSQL separately and apply Alembic migrations with `alembic upgra
 
 The following are potential future improvements, not claims about current functionality:
 
-- Add workspace and membership administration with explicit permission policies.
 - Add external sourcing integrations and a durable background task system.
 - Add persisted Boolean Search functionality only alongside a defined data and provider contract.
-- Evaluate any future matching signals against sufficiently complete human-reviewed data before considering them for ranking.
-- Add deployment automation and operational monitoring after production requirements are defined.
+- Evaluate future matching signals against sufficiently complete human-reviewed data before considering them for ranking.
+- Add email-based workspace invitations for users who are not already registered.
+- Improve deployment automation and operational monitoring as production requirements evolve.
 
 ## Responsible AI and human oversight
 

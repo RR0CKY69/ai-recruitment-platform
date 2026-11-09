@@ -89,7 +89,7 @@ export default function SettingsPage() {
                 <p className="text-sm text-slate-300">No workspace is selected.</p>
               )}
               <p className="mt-4 text-xs text-slate-400">
-                Workspace editing is unavailable because the API provides no workspace update endpoint. Your membership role is read-only here.
+                Manage your workspace name and team membership from the Workspace & Team page. Your permissions depend on your workspace role.
               </p>
             </section>
 

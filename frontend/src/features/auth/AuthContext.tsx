@@ -15,6 +15,8 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   selectWorkspace: (w: Workspace) => void;
+  updateWorkspaceInContext: (w: Workspace) => void;
+  removeWorkspaceFromContext: (workspaceId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -159,6 +161,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateWorkspaceInContext = (updated: Workspace) => {
+    setWorkspaces(current =>
+      current.map(w =>
+        w.workspace_id === updated.workspace_id ? updated : w
+      )
+    );
+    setSelectedWorkspace(current =>
+      current?.workspace_id === updated.workspace_id ? updated : current
+    );
+  };
+  const removeWorkspaceFromContext = (workspaceId: string) => {
+    setWorkspaces(current =>
+      current.filter(w => w.workspace_id !== workspaceId)
+    );
+    setSelectedWorkspace(current =>
+      current?.workspace_id === workspaceId ? null : current
+    );
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -171,6 +192,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signOut,
         selectWorkspace: setSelectedWorkspace,
+        updateWorkspaceInContext,
+        removeWorkspaceFromContext,
       }}
     >
       {children}

@@ -61,7 +61,7 @@ test('shows only current account and selected workspace data without unsupported
   expect(screen.getByText('Recruiting')).toBeInTheDocument()
   expect(screen.getByText('RECRUITER')).toBeInTheDocument()
   expect(screen.getByText(/Profile changes are unavailable/)).toBeInTheDocument()
-  expect(screen.getByText(/Workspace editing is unavailable/)).toBeInTheDocument()
+  expect(screen.getByText(/Manage your workspace name and team membership/)).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
   expect(screen.getByText('Access token storage')).toBeInTheDocument()
   expect(screen.queryByText(/Bearer|refresh token/i)).not.toBeInTheDocument()

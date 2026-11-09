@@ -8,6 +8,7 @@ interface ConfirmationDialogProps {
   confirmingLabel?: string
   cancelLabel?: string
   confirming?: boolean
+  error?: string
   onCancel: () => void
   onConfirm: () => void
 }
@@ -20,6 +21,7 @@ export default function ConfirmationDialog({
   confirmingLabel = 'Please wait...',
   cancelLabel = 'Cancel',
   confirming = false,
+  error,
   onCancel,
   onConfirm,
 }: ConfirmationDialogProps) {
@@ -36,6 +38,14 @@ export default function ConfirmationDialog({
       role="alertdialog"
       showCloseButton={false}
     >
+      {error && (
+        <div
+          role="alert"
+          className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"
+        >
+          {error}
+        </div>
+      )}
       <div className="flex flex-wrap justify-end gap-3">
         <button type="button" className="button-ghost" disabled={confirming} onClick={handleCancel}>
           {cancelLabel}
